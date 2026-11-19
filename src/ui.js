@@ -66,6 +66,7 @@ export function createUI(thumbs) {
   }
   function flash() { restart($('flash'), 'go'); }
   function vignette(on) { $('vignette').classList.toggle('on', on); }
+  function setHype(l) { document.documentElement.style.setProperty('--hype', l.toFixed(2)); }
   function setSound(on) { $('btn-sound').classList.toggle('off', !on); }
   function setBag(n) { el.bag.hidden = !n; el.bag.textContent = n; }
 
@@ -91,5 +92,5 @@ export function createUI(thumbs) {
   $('modal-close').addEventListener('click', closeSheet);
   el.modal.addEventListener('click', (e) => { if (e.target === el.modal) closeSheet(); });
 
-  return { update, setBalance, setBet, roundStart, roundEnd, addWin, showPrompt, setFast, popup, callout, banner, symbolPop, flash, vignette, setSound, setBag, openSheet, closeSheet, get sheetOpen() { return !el.modal.hidden; } };
+  return { update, setBalance, setBet, roundStart, roundEnd, addWin, showPrompt, setFast, popup, callout, banner, symbolPop, setHype, flash, vignette, setSound, setBag, openSheet, closeSheet, get sheetOpen() { return !el.modal.hidden; } };
 }

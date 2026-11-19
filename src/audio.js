@@ -59,7 +59,12 @@ export const sfx = {
     src.buffer = noiseBuf; src.loop = true; f.type = 'lowpass'; f.frequency.value = 110;
     g.gain.value = 0.0001; g.gain.exponentialRampToValueAtTime(0.5, ctx.currentTime + 0.25);
     src.connect(f).connect(g).connect(master); src.start();
-    rumbleNode = { src, g };
+    rumbleNode = { src, g, f };
+  },
+  rumbleLevel(l) {
+    if (!rumbleNode) return;
+    rumbleNode.g.gain.setTargetAtTime(0.3 + l * 0.75, ctx.currentTime, 0.12);
+    rumbleNode.f.frequency.setTargetAtTime(95 + l * 190, ctx.currentTime, 0.12);
   },
   rumbleStop() {
     if (!rumbleNode) return;

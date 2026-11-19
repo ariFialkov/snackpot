@@ -129,3 +129,10 @@ button { font: inherit; color: inherit; border: 0; background: none; cursor: poi
 .sym.t0 .rays { display: none; }
 .sym.t0 .ring { box-shadow: 0 0 0 3px var(--ink), 0 0 0 5px var(--c); }
 @keyframes rayspin { to { transform: rotate(360deg); } }
+
+/* excitement build-up while prizes are dropping */
+#hype { position: fixed; inset: 0; pointer-events: none; opacity: calc(var(--hype, 0) * 0.9);
+  box-shadow: inset 0 0 calc(30px + var(--hype, 0) * 80px) calc(var(--hype, 0) * 14px) #ffb81a, inset 0 0 calc(var(--hype, 0) * 60px) calc(var(--hype, 0) * 10px) #ff3d8b;
+  animation: hypepulse .45s ease-in-out infinite alternate; }
+@keyframes hypepulse { from { filter: brightness(.8); } to { filter: brightness(1.25); } }
+#win { scale: calc(1 + var(--hype, 0) * 0.22); transform-origin: 50% 0; }

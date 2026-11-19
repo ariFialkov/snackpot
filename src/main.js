@@ -20,7 +20,7 @@ import { createUI, fmt } from './ui.js';
 
 const DEV = import.meta.env.DEV;
 const params = new URLSearchParams(location.search);
-const BETS = [20, 40, 100, 200, 500, 1000, 2000, 5000, 10000]; // cents; all divisible by UNITS_PER_BET
+const BETS = [100, 200, 500, 1000, 2000, 5000, 10000]; // cents; whole credits, so every 0.01x item value is a whole cent
 const START_BALANCE = 100000;
 const SAVE_KEY = 'snackpot.v1';
 const TOUCH = matchMedia('(pointer: coarse)').matches;
@@ -230,17 +230,32 @@ function coinFly() {
 let state = 'loading';
 let forced = null;
 
+// The machine shakes for the whole drop sequence, harder as the total climbs.
+const hype = { level: 0, target: 0, sent: -1 };
+function updateHype(real, t) {
+  hype.level += (hype.target - hype.level) * Math.min(1, real * 3.5);
+  const l = hype.level;
+  if (l < 0.004) {
+    if (hype.sent !== 0) { hype.sent = 0; machine.body.position.set(0, 0, 0); machine.body.rotation.z = 0; for (const s of machine.slots) if (s.item) s.item.rotation.z = 0; ui.setHype(0); }
+    return;
+  }
+  const a = (0.006 + 0.034 * l * l + 0.012 * l) * (1 - rig.focus * 0.6);
+  machine.body.position.set(rand(-a, a), rand(-a, a) * 0.5, 0); machine.body.rotation.z = rand(-a, a) * 0.22;
+  for (const s of machine.slots) if (s.item && !s.busy) s.item.rotation.z = rand(-a, a) * 4;
+  rig.trauma = Math.max(rig.trauma, l * 0.34);
+  machine.state.chase = 2 + l * 6;
+  // sparks shaken loose from the cabinet, more of them as it builds
+  if (Math.random() < real * (2 + l * 40)) {
+    const side = Math.random() < 0.5 ? -1 : 1, top = Math.random() < 0.4;
+    tmpV.set(top ? rand(-1.4, 1.4) : side * 1.5, top ? 4.95 : rand(1.4, 4.9), 0.95);
+    vfx.burst(tmpV, Math.random() < 0.5 ? 0xffd23f : 0xffffff, 3 + Math.round(l * 6), { speed: 1.2 + l * 2.4, size: 0.08 + l * 0.06, up: 1 + l, life: 0.7 });
+  }
+  if (Math.abs(l - hype.sent) > 0.02) { hype.sent = l; sfx.rumbleLevel(l); ui.setHype(l); }
+}
 async function rumble(dur) {
   sfx.rumbleStart(); machine.state.chase = 3; machine.setScreen('HERE WE GO', '• • •', '#ffd23f');
-  await tween(dur, (e, k) => {
-    const a = Math.sin(k * Math.PI) * 0.035 + 0.01;
-    machine.body.position.set(rand(-a, a), rand(-a, a) * 0.5, 0); machine.body.rotation.z = rand(-a, a) * 0.25;
-    for (const s of machine.slots) if (s.item) s.item.rotation.z = rand(-a, a) * 4;
-    rig.trauma = Math.max(rig.trauma, 0.25);
-  }, E.linear);
-  machine.body.position.set(0, 0, 0); machine.body.rotation.z = 0;
-  for (const s of machine.slots) if (s.item) s.item.rotation.z = 0;
-  sfx.rumbleStop();
+  hype.target = 0.22;
+  await wait(dur);
 }
 
 function refill(slot, id) {
@@ -368,8 +383,9 @@ async function dropOne(step, drop, index, betCents) {
 
 let running = 0, newKeeps = 0;
 async function finale(round, betCents) {
-  const cents = (round.units * betCents) / UNITS_PER_BET, m = round.mult;
-  const level = m >= 250 ? 4 : m >= 50 ? 3 : m >= 10 ? 2 : m >= 1 ? 1 : 0;
+  const cents = (round.units * betCents) / UNITS_PER_BET, m = round.band;
+  const level = m >= 250 ? 4 : m >= 50 ? 3 : m >= 10 ? 2 : round.mult >= 1 ? 1 : 0;
+  hype.target = 0; sfx.rumbleStop();
   store.balance += cents; store.stats.rounds++; store.stats.best = Math.max(store.stats.best, cents); save();
   ui.setBalance(store.balance);
   sfx.win(level);
@@ -377,7 +393,7 @@ async function finale(round, betCents) {
   if (level >= 1) {
     const title = ['', 'NICE!', 'BIG WIN!', 'MEGA WIN!', 'SNACKPOT!'][level];
     const color = ['', '#2fd67b', '#2f9bff', '#b45cff', '#ffb81a'][level];
-    ui.banner({ title, amount: cents, color, hold: [0, 1.1, 2.2, 3.3, 4.8][level], kicker: level >= 2 ? `${m}× YOUR BET` : null, small: level === 1 });
+    ui.banner({ title, amount: cents, color, hold: [0, 1.1, 2.2, 3.3, 4.8][level], kicker: level >= 2 ? `${+round.mult.toFixed(2)}× YOUR BET` : null, small: level === 1 });
     vfx.confetti(front, 40 + level * 50, { up: 5 + level, speed: 4 + level });
     machine.state.flash = 0.6 + level * 0.8;
   }
@@ -416,7 +432,11 @@ async function playRound() {
   sfx.whoosh();
   await Promise.all([env.regenerate(true), shuffleSlots(plan.initial.map((c) => c.id))]);
   await rumble(0.75);
-  for (let i = 0; i < round.drops.length; i++) await dropOne(plan.steps[i], round.drops[i], i, betCents);
+  for (let i = 0; i < round.drops.length; i++) {
+    // builds with every drop and with the size of the running total
+    hype.target = Math.min(1, 0.22 + (0.45 * (i + 1)) / round.drops.length + 0.4 * Math.min(1, Math.log10(1 + running / betCents) / 2));
+    await dropOne(plan.steps[i], round.drops[i], i, betCents);
+  }
   await wait(0.2);
   await finale(round, betCents);
   clock.scale = 1; rig.sway = 1; setView(0, 1.4);
@@ -482,6 +502,7 @@ async function boot() {
     machine.update(t, real); env.update(t, real); vfx.update(dt, t); tray.update(dt); updateTwinklers(t);
     for (const b of tray.bodies) { const tr = b.o.userData.trail; if (tr && Math.random() < tr.rate) vfx.trail(b.o.position, tr.color, tr.size); } ui.update(real);
     for (const s of machine.slots) if (s.item && !s.busy) { s.item.rotation.y = Math.sin(t * 0.7 + s.index * 1.3) * 0.65; s.item.rotation.x = -0.06; s.item.position.y = Math.sin(t * 1.4 + s.index) * 0.008; }
+    updateHype(real, t);
     updateCamera(t, real);
     composer.render();
     if (!document.hidden && !params.has('hq') && quality > 0 && ++frames > 30) {

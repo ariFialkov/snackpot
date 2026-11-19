@@ -14,12 +14,15 @@ npm run sim      # Monte-Carlo check of the RTP
 
 ## How a round is decided
 
-`src/game/math.js` holds all the game math, in integer units of 1/20 of the stake.
+`src/game/math.js` holds all the game math, in integer units of 1/100 of the stake.
 
-1. A total multiplier is drawn from a paytable (0.1× to 1000×). The weight of the low band is
-   solved so the table's expected value equals the target RTP (`DEFAULT_RTP`, 96%).
-2. That total is broken into items (and optionally a combo) that add up to it exactly.
-3. The machine's stock is then arranged so those items are sitting in their slots when their turn comes.
+1. Every paytable row (a win size from about 0.1× to 1000×, and how often it comes up) owns a fixed
+   book of 64 pre-built recipes: sets of oddly-priced items, sometimes with a combo, worth roughly
+   that win size. The book is generated from a fixed seed, so it never changes between runs.
+2. Because the recipes are fixed, each row's average payout is known exactly. The weight of the low
+   rows is solved so the whole table returns exactly the target RTP (`DEFAULT_RTP`, 96%).
+3. A round picks a row by weight and one of its recipes at random. The machine's stock is then
+   arranged so those items are sitting in their slots when their turn comes.
 
 Items, tiers, combos and paytable weights are all plain tables at the top of that file.
 
