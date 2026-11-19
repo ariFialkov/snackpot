@@ -6,10 +6,12 @@ import { ITEM, TIERS, UNITS_PER_BET } from '../game/math.js';
 const PI = Math.PI;
 export const W = 3.1, H = 5.8, D = 1.7;
 export const COLS = 4, ROWS = 5;
-const WIN = { x0: -1.33, x1: 0.62, y0: 1.5, y1: 4.8 };
-const TRAY = { x0: -1.33, x1: 0.62, y0: 0.5, y1: 1.2 };
+const WIN = { x0: -1.33, x1: 1.33, y0: 1.5, y1: 4.8 };
+const TRAY = { x0: -1.33, x1: 0.36, y0: 0.45, y1: 1.25 };
+export const ITEM_SCALE = 1.3; // items are shown oversized so the prizes read clearly
 const COLW = (WIN.x1 - WIN.x0) / COLS, ROWH = (WIN.y1 - WIN.y0) / ROWS;
-const PX = 1.09; // control column centre x
+const PX = 0.9; // control cluster centre x (bottom right, beside the tray)
+const TCX = (TRAY.x0 + TRAY.x1) / 2;
 const FZ = D / 2; // front face z
 
 const tagCache = {};
@@ -60,7 +62,7 @@ export function buildMachine(ledMat, panelMat) {
   const shelfMat = std(0xf2f4fb, { r: 0.35, m: 0.3 });
   const helix = (() => {
     const p = [], turns = 5.5, len = 0.72;
-    for (let i = 0; i <= 110; i++) { const t = i / 110, a = t * turns * PI * 2; p.push(new THREE.Vector3(Math.cos(a) * 0.1, Math.sin(a) * 0.1, -len + t * len)); }
+    for (let i = 0; i <= 110; i++) { const t = i / 110, a = t * turns * PI * 2; p.push(new THREE.Vector3(Math.cos(a) * 0.13, Math.sin(a) * 0.13, -len + t * len)); }
     return new THREE.TubeGeometry(new THREE.CatmullRomCurve3(p), 150, 0.011, 6);
   })();
   const haloMap = softDotTex();
@@ -68,23 +70,23 @@ export function buildMachine(ledMat, panelMat) {
   for (let r = 0; r < ROWS; r++) {
     const sy = WIN.y0 + r * ROWH;
     body.add(mesh(rbox(cw - 0.02, 0.04, 1.0, 0.012), shelfMat, cx, sy + 0.01, -0.22));
-    body.add(mesh(new THREE.BoxGeometry(cw - 0.02, 0.05, 0.012), ledMat, cx, sy + 0.005, 0.287));
+    body.add(mesh(new THREE.BoxGeometry(cw - 0.02, 0.06, 0.012), ledMat, cx, sy + 0.035, 0.287));
     for (let c = 0; c < COLS; c++) {
       const x = WIN.x0 + (c + 0.5) * COLW;
-      const coil = mesh(helix, chrome, x, sy + 0.135, 0.06);
+      const coil = mesh(helix, chrome, x, sy + 0.165, 0.06);
       const tagMat = new THREE.MeshBasicMaterial({ map: null, toneMapped: false });
-      const tag = mesh(new THREE.PlaneGeometry(0.23, 0.08), tagMat, x, sy + 0.005, 0.296);
+      const tag = mesh(new THREE.PlaneGeometry(0.29, 0.1), tagMat, x, sy + 0.05, 0.296);
       const halo = new THREE.Sprite(new THREE.SpriteMaterial({ map: haloMap, transparent: true, opacity: 0.3, depthWrite: false, blending: THREE.AdditiveBlending }));
-      halo.position.set(x, sy + 0.3, -0.1); halo.scale.setScalar(0.62);
-      const holder = new THREE.Group(); holder.position.set(x, sy + 0.255, 0.17);
+      halo.position.set(x, sy + 0.33, -0.1); halo.scale.setScalar(0.8);
+      const holder = new THREE.Group(); holder.position.set(x, sy + 0.325, 0.17); holder.scale.setScalar(ITEM_SCALE);
       body.add(coil, tag, halo, holder);
       slots.push({ index: slots.length, row: r, col: c, coil, tag, tagMat, halo, holder, item: null, itemId: null, home: holder.position.clone() });
     }
   }
   // interior light bars
-  for (const sx of [WIN.x0 + 0.005, WIN.x1 - 0.005]) body.add(mesh(new THREE.BoxGeometry(0.025, WIN.y1 - WIN.y0 - 0.1, 0.03), glow(0xffffff, 1.2), sx, (WIN.y0 + WIN.y1) / 2, 0.52));
-  const inLight = new THREE.PointLight(0xfff4ff, 1.3, 6, 1.6); inLight.position.set(cx, 3.2, 0.52); body.add(inLight);
-  const inLight2 = new THREE.PointLight(0xfff4ff, 1.0, 5, 1.6); inLight2.position.set(cx, 1.9, 0.52); body.add(inLight2);
+  for (const sx of [WIN.x0 + 0.005, WIN.x1 - 0.005]) body.add(mesh(new THREE.BoxGeometry(0.025, WIN.y1 - WIN.y0 - 0.1, 0.03), glow(0xffffff, 1.0), sx, (WIN.y0 + WIN.y1) / 2, 0.52));
+  const inLight = new THREE.PointLight(0xfff4ff, 1.4, 6, 1.5); inLight.position.set(cx, 3.2, 0.52); body.add(inLight);
+  const inLight2 = new THREE.PointLight(0xfff4ff, 1.1, 5, 1.5); inLight2.position.set(cx, 1.9, 0.52); body.add(inLight2);
 
   // glass
   const glass = mesh(new THREE.PlaneGeometry(WIN.x1 - WIN.x0, WIN.y1 - WIN.y0), new THREE.MeshBasicMaterial({ color: 0xbfd8ff, transparent: true, opacity: 0.05, depthWrite: false }), cx, (WIN.y0 + WIN.y1) / 2, 0.6);
@@ -109,10 +111,10 @@ export function buildMachine(ledMat, panelMat) {
   const trayTrim = roundedRectPath(new THREE.Shape(), TRAY.x0 - 0.07, TRAY.y0 - 0.07, TRAY.x1 - TRAY.x0 + 0.14, TRAY.y1 - TRAY.y0 + 0.14, 0.15);
   trayTrim.holes.push(hole({ x0: TRAY.x0 - 0.025, x1: TRAY.x1 + 0.025, y0: TRAY.y0 - 0.025, y1: TRAY.y1 + 0.025 }, 0.115));
   body.add(mesh(new THREE.ExtrudeGeometry(trayTrim, { depth: 0.03, bevelEnabled: true, bevelThickness: 0.01, bevelSize: 0.01, bevelSegments: 2, curveSegments: 12 }), chrome, 0, 0, FZ + 0.02));
-  body.add(mesh(new THREE.BoxGeometry(cw - 0.1, 0.03, 0.03), ledMat, cx, TRAY.y1 + 0.02, 0.5));
-  const trayLight = new THREE.PointLight(0xffffff, 2.2, 3, 1.5); trayLight.position.set(cx, 1.0, 0.75); body.add(trayLight);
+  body.add(mesh(new THREE.BoxGeometry(TRAY.x1 - TRAY.x0 - 0.06, 0.03, 0.03), ledMat, TCX, TRAY.y1 + 0.02, 0.5));
+  const trayLight = new THREE.PointLight(0xffffff, 2.2, 3, 1.5); trayLight.position.set(TCX, 1.05, 0.75); body.add(trayLight);
   const fascia = decal(1.5, 0.15, canvasTex(512, 52, (c) => { text(c, '▼   GRAB YOUR SNACKS   ▼', 256, 28, 30, '#b9bfd6', { weight: 600 }); }));
-  fascia.position.set(cx, 1.35, FZ + 0.037); body.add(fascia);
+  fascia.position.set(TCX, 1.375, FZ + 0.037); body.add(fascia);
 
   // --- marquee -----------------------------------------------------------
   body.add(mesh(rbox(2.72, 0.66, 0.08, 0.1), dark, 0, 5.3, FZ + 0.03));
@@ -143,46 +145,35 @@ export function buildMachine(ledMat, panelMat) {
   const dome = mesh(new THREE.SphereGeometry(0.14, 20, 12, 0, PI * 2, 0, PI / 2), domeMat, 0, 0.1, 0); dome.scale.y = 1.25;
   beacon.add(dome); beacon.position.set(-1.05, H, 0.1); body.add(beacon);
 
-  // --- control panel -----------------------------------------------------
+  // --- control cluster (bottom right) ---------------------------------------
   const pz = FZ + 0.035;
-  body.add(mesh(rbox(0.6, 3.95, 0.03, 0.09), panelMat, PX, 2.85, pz - 0.012));
-  body.add(mesh(rbox(0.5, 0.36, 0.05, 0.05), dark, PX, 4.45, pz));
-  const scrCanvas = document.createElement('canvas'); scrCanvas.width = 256; scrCanvas.height = 160;
+  body.add(mesh(rbox(0.86, 0.86, 0.03, 0.1), panelMat, PX, 0.85, pz - 0.012));
+  body.add(mesh(rbox(0.72, 0.36, 0.05, 0.05), dark, PX, 1.05, pz));
+  const scrCanvas = document.createElement('canvas'); scrCanvas.width = 320; scrCanvas.height = 144;
   const scrTex = new THREE.CanvasTexture(scrCanvas); scrTex.colorSpace = THREE.SRGBColorSpace;
-  body.add(mesh(new THREE.PlaneGeometry(0.43, 0.27), new THREE.MeshBasicMaterial({ map: scrTex, toneMapped: false }), PX, 4.45, pz + 0.027));
+  body.add(mesh(new THREE.PlaneGeometry(0.64, 0.288), new THREE.MeshBasicMaterial({ map: scrTex, toneMapped: false }), PX, 1.05, pz + 0.027));
   function setScreen(top, big, color = '#7dffb0') {
     const c = scrCanvas.getContext('2d');
-    c.fillStyle = '#07140f'; c.fillRect(0, 0, 256, 160);
-    c.fillStyle = 'rgba(255,255,255,.04)'; for (let y = 0; y < 160; y += 4) c.fillRect(0, y, 256, 1);
-    text(c, top, 128, 42, 28, color, { weight: 600 });
+    c.fillStyle = '#07140f'; c.fillRect(0, 0, 320, 144);
+    c.fillStyle = 'rgba(255,255,255,.04)'; for (let y = 0; y < 144; y += 4) c.fillRect(0, y, 320, 1);
+    text(c, top, 160, 36, 28, color, { weight: 600 });
     let size = 62; c.font = `700 ${size}px ${FONT}`;
-    while (c.measureText(big).width > 232 && size > 20) { size -= 4; c.font = `700 ${size}px ${FONT}`; }
-    text(c, big, 128, 104, size, '#fff');
+    while (c.measureText(big).width > 296 && size > 20) { size -= 4; c.font = `700 ${size}px ${FONT}`; }
+    text(c, big, 160, 96, size, '#fff');
     scrTex.needsUpdate = true;
   }
-  const keyM = std(0xf4f6fc, { r: 0.4 });
-  for (let r = 0; r < 4; r++) for (let c = 0; c < 3; c++) body.add(mesh(rbox(0.12, 0.1, 0.035, 0.025), r === 3 && c !== 1 ? std(c ? 0x35e07a : 0xff5c6c, { r: 0.4 }) : keyM, PX - 0.15 + c * 0.15, 4.0 - r * 0.125, pz + 0.012));
   // coin slot
-  body.add(mesh(rbox(0.3, 0.4, 0.035, 0.06), chrome, PX, 3.16, pz + 0.005));
-  body.add(mesh(rbox(0.035, 0.2, 0.02, 0.012), std(0x05050a, { r: 0.9 }), PX, 3.16, pz + 0.018));
-  const coinRing = mesh(new THREE.TorusGeometry(0.125, 0.012, 8, 32), ledMat, PX, 3.16, pz + 0.024); coinRing.scale.set(0.75, 1.15, 1); body.add(coinRing);
+  const CX = PX - 0.2, BX = PX + 0.17, CY = 0.64;
+  body.add(mesh(rbox(0.26, 0.36, 0.035, 0.06), chrome, CX, CY, pz + 0.005));
+  body.add(mesh(rbox(0.032, 0.18, 0.02, 0.012), std(0x05050a, { r: 0.9 }), CX, CY, pz + 0.018));
+  const coinRing = mesh(new THREE.TorusGeometry(0.11, 0.011, 8, 32), ledMat, CX, CY, pz + 0.024); coinRing.scale.set(0.75, 1.15, 1); body.add(coinRing);
   // play button
-  const btnBase = mesh(new THREE.CylinderGeometry(0.2, 0.22, 0.05, 32), chrome, PX, 2.55, pz + 0.02); btnBase.rotation.x = PI / 2;
+  const btnBase = mesh(new THREE.CylinderGeometry(0.18, 0.2, 0.05, 32), chrome, BX, CY, pz + 0.02); btnBase.rotation.x = PI / 2;
   const btnMat = new THREE.MeshBasicMaterial({ color: 0xff3d6e, toneMapped: false });
-  const button = mesh(new THREE.CylinderGeometry(0.16, 0.165, 0.07, 32), btnMat, PX, 2.55, pz + 0.06); button.rotation.x = PI / 2;
-  const btnLabel = decal(0.22, 0.22, canvasTex(128, 128, (c) => { c.fillStyle = '#fff'; c.beginPath(); c.moveTo(46, 34); c.lineTo(98, 64); c.lineTo(46, 94); c.closePath(); c.fill(); }), { lit: false });
-  btnLabel.position.set(PX, 2.55, pz + 0.097);
+  const button = mesh(new THREE.CylinderGeometry(0.145, 0.15, 0.07, 32), btnMat, BX, CY, pz + 0.06); button.rotation.x = PI / 2;
+  const btnLabel = decal(0.2, 0.2, canvasTex(128, 128, (c) => { c.fillStyle = '#fff'; c.beginPath(); c.moveTo(46, 34); c.lineTo(98, 64); c.lineTo(46, 94); c.closePath(); c.fill(); }), { lit: false });
+  btnLabel.position.set(BX, CY, pz + 0.097);
   body.add(btnBase, button, btnLabel);
-  // card reader + change cup
-  body.add(mesh(rbox(0.4, 0.2, 0.06, 0.04), dark, PX, 2.02, pz + 0.01), mesh(rbox(0.3, 0.025, 0.02, 0.008), std(0x05050a), PX, 2.03, pz + 0.035));
-  body.add(mesh(new THREE.SphereGeometry(0.018, 10, 8), glow(0x35ff8a, 2), PX + 0.14, 2.085, pz + 0.04));
-  body.add(mesh(rbox(0.42, 0.34, 0.03, 0.08), chrome, PX, 0.95, pz), mesh(rbox(0.34, 0.26, 0.02, 0.06), std(0x0d0c1c, { r: 0.8 }), PX, 0.95, pz + 0.012));
-  const sticker = decal(0.44, 0.44, canvasTex(256, 256, (c) => {
-    c.translate(128, 128); c.rotate(-0.12);
-    c.fillStyle = '#ffd23f'; c.beginPath(); for (let i = 0; i < 24; i++) { const a = i * PI / 12, r = i % 2 ? 100 : 122; c.lineTo(Math.cos(a) * r, Math.sin(a) * r); } c.fill();
-    text(c, 'WIN', 0, -34, 46, '#d6245c'); text(c, '1000×', 0, 16, 60, '#101327'); text(c, 'your stake', 0, 60, 24, '#d6245c', { weight: 600 });
-  }));
-  sticker.position.set(PX, 1.5, pz + 0.006); body.add(sticker);
 
   // kick plate + feet
   body.add(mesh(rbox(W - 0.5, 0.2, 0.03, 0.05), std(0xdfe3f0, { r: 0.4, m: 0.4 }), 0, 0.22, FZ + 0.03));
@@ -196,7 +187,7 @@ export function buildMachine(ledMat, panelMat) {
     const n = bulbPos.length, speed = 6 * state.chase;
     for (let i = 0; i < n; i++) {
       const on = state.flash > 0 ? Math.sin(t * 22) > 0 : (i + Math.floor(t * speed)) % 3 === 0;
-      if (on) col.setRGB(2.6, 2.1, 0.9); else col.setRGB(0.5, 0.3, 0.12);
+      if (on) col.setRGB(1.9, 1.5, 0.6); else col.setRGB(0.45, 0.28, 0.1);
       bulbs.setColorAt(i, col);
     }
     bulbs.instanceColor.needsUpdate = true;
@@ -217,8 +208,8 @@ export function buildMachine(ledMat, panelMat) {
 
   return {
     root, body, slots, setScreen, update, state, styleSlot, button,
-    coinSlot: new THREE.Vector3(PX, 3.16, pz + 0.05),
-    trayBox: { x0: TRAY.x0 + 0.22, x1: TRAY.x1 - 0.22, y: 0.73, z: 0.42 },
+    coinSlot: new THREE.Vector3(CX, CY, pz + 0.05),
+    trayBox: { x0: TRAY.x0 + 0.12, x1: TRAY.x1 - 0.12, y: 0.79, z: 0.4 },
     dropZ: 0.44,
     center: new THREE.Vector3(0, H / 2, 0),
   };
