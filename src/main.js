@@ -1,0 +1,464 @@
+import '@fontsource-variable/fredoka';
+import './style.css';
+import * as THREE from 'three';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+
+import { ITEMS, ITEM, TIERS, UNITS_PER_BET, DEFAULT_RTP, createPaytable, drawRound, secureRandom } from './game/math.js';
+import { clock, tween, wait, updateTweens, E, lerp, rand, pick, shuffle } from './gfx/anim.js';
+import { glow, mesh, FONT } from './gfx/util.js';
+import { makeItem, disposeItem, updateTwinklers } from './gfx/models.js';
+import { buildMachine, H as MACHINE_H } from './gfx/machine.js';
+import { buildEnvironment } from './gfx/environment.js';
+import { buildVfx } from './gfx/vfx.js';
+import { sfx, unlock, setMuted } from './audio.js';
+import { createUI, fmt } from './ui.js';
+
+const DEV = import.meta.env.DEV;
+const params = new URLSearchParams(location.search);
+const BETS = [20, 40, 100, 200, 500, 1000, 2000, 5000, 10000]; // cents; all divisible by UNITS_PER_BET
+const START_BALANCE = 100000;
+const SAVE_KEY = 'snackpot.v1';
+const TOUCH = matchMedia('(pointer: coarse)').matches;
+
+// ---- persistence ---------------------------------------------------------------
+const store = { balance: START_BALANCE, bet: 100, muted: false, collection: {}, stats: { rounds: 0, best: 0 }, rtp: DEFAULT_RTP };
+try { Object.assign(store, JSON.parse(localStorage.getItem(SAVE_KEY) || '{}')); } catch { /* fresh start */ }
+store.rtp = DEFAULT_RTP;
+if (!BETS.includes(store.bet)) store.bet = 100;
+const save = () => { try { localStorage.setItem(SAVE_KEY, JSON.stringify(store)); } catch { /* private mode */ } };
+const paytable = createPaytable(store.rtp);
+
+// ---- renderer --------------------------------------------------------------------
+const canvas = document.getElementById('scene');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, alpha: true, powerPreference: 'high-performance' });
+renderer.toneMapping = THREE.NeutralToneMapping;
+renderer.toneMappingExposure = 1.0;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFShadowMap;
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(32, 1, 0.5, 220);
+const pmrem = new THREE.PMREMGenerator(renderer);
+scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+scene.environmentIntensity = 0.45;
+
+scene.add(new THREE.HemisphereLight(0xffffff, 0xffe1f0, 0.55));
+const sun = new THREE.DirectionalLight(0xfff6e8, 1.25);
+sun.position.set(5.5, 11, 8.5);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+Object.assign(sun.shadow.camera, { left: -10, right: 10, top: 9, bottom: -5, near: 1, far: 34 });
+sun.shadow.bias = -0.0004; sun.shadow.normalBias = 0.03; sun.shadow.radius = 5;
+scene.add(sun);
+
+const ledMat = glow(0xff3d9a, 1.7);
+const panelMat = new THREE.MeshPhysicalMaterial({ color: 0x7a5cff, roughness: 0.3, clearcoat: 1, clearcoatRoughness: 0.2 });
+
+let composer, bloom, quality = 2, ui, machine, env, vfx;
+const rig = { dist: 12, target: new THREE.Vector3(0, 2.95, 0), focus: 0, fTarget: new THREE.Vector3(), fDist: 7, trauma: 0, sway: 1 };
+
+function resize() {
+  const w = innerWidth, h = innerHeight, aspect = w / h;
+  const pr = Math.min(devicePixelRatio || 1, quality >= 2 ? 2 : quality === 1 ? 1.5 : 1);
+  renderer.setPixelRatio(pr); renderer.setSize(w, h, false);
+  composer.setPixelRatio(pr); composer.setSize(w, h);
+  camera.aspect = aspect;
+  // keep the whole machine between the top and bottom HUD bands
+  const t = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
+  const band = Math.min(0.2, 150 / h);
+  const halfH = (MACHINE_H / 2 + 0.25) / (1 - 2 * band);
+  rig.dist = Math.max(halfH / t, 1.95 / (t * aspect));
+  camera.updateProjectionMatrix();
+  if (scene.fog) { scene.fog.near = rig.dist + 10; scene.fog.far = rig.dist + 75; }
+  vfx?.setPointScale((h * pr) / (2 * t));
+}
+
+const shake = new THREE.Vector3(), camPos = new THREE.Vector3(), camTgt = new THREE.Vector3();
+function updateCamera(t, dt) {
+  const f = rig.focus;
+  camTgt.lerpVectors(rig.target, rig.fTarget, f);
+  const dist = lerp(rig.dist, rig.fDist, f);
+  const yaw = Math.sin(t * 0.33) * 0.14 * rig.sway * (1 - f * 0.7), pitch = 0.075 + Math.sin(t * 0.21) * 0.02;
+  camPos.set(Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), Math.cos(yaw) * Math.cos(pitch)).multiplyScalar(dist).add(camTgt);
+  rig.trauma = Math.max(0, rig.trauma - dt * 1.8);
+  const s = rig.trauma * rig.trauma * 0.22;
+  shake.set(Math.sin(t * 71) + Math.sin(t * 113), Math.sin(t * 89) + Math.sin(t * 127), 0).multiplyScalar(s);
+  camera.position.copy(camPos).add(shake);
+  camera.lookAt(camTgt.x + shake.x * 0.6, camTgt.y + shake.y * 0.6, camTgt.z);
+}
+const focusCam = (target, dist, dur) => { const from = rig.focus; rig.fTarget.copy(target); rig.fDist = dist; return tween(dur, (k) => { rig.focus = lerp(from, 1, k); }); };
+const unfocusCam = (dur) => { const from = rig.focus; return tween(dur, (k) => { rig.focus = lerp(from, 0, k); }); };
+const tmpV = new THREE.Vector3();
+function toScreen(v) { tmpV.copy(v).project(camera); return { x: (tmpV.x * 0.5 + 0.5) * innerWidth, y: (-tmpV.y * 0.5 + 0.5) * innerHeight }; }
+
+// ---- thumbnails (rendered once from the real 3D models) --------------------------
+function renderThumbs() {
+  const out = {}, s = new THREE.Scene(), cam = new THREE.OrthographicCamera(-0.26, 0.26, 0.26, -0.26, 0.1, 5);
+  s.environment = scene.environment;
+  s.add(new THREE.HemisphereLight(0xffffff, 0xddddff, 1.6));
+  const d = new THREE.DirectionalLight(0xffffff, 2); d.position.set(1, 2, 3); s.add(d);
+  cam.position.set(0, 0, 2);
+  renderer.setPixelRatio(1); renderer.setSize(144, 144, false); renderer.setClearColor(0x000000, 0);
+  for (const it of ITEMS) {
+    const m = makeItem(it.id); s.add(m);
+    m.traverse((o) => { if (o.userData.tw) o.visible = false; });
+    renderer.clear(); renderer.render(s, cam);
+    out[it.id] = canvas.toDataURL('image/png');
+    disposeItem(m);
+  }
+  return out;
+}
+
+// ---- slots -----------------------------------------------------------------------
+const DISPLAY_WEIGHT = [10, 6, 4, 2.2, 1.2];
+const displayBag = ITEMS.flatMap((i) => Array(Math.round(DISPLAY_WEIGHT[i.tier] * 5)).fill(i.id));
+const randomDisplayId = () => pick(displayBag);
+const tierColor = TIERS.map((t) => new THREE.Color(t.color));
+
+function setSlotItem(slot, id) {
+  if (slot.item) disposeItem(slot.item);
+  slot.item = makeItem(id);
+  slot.holder.add(slot.item);
+  machine.styleSlot(slot, id);
+  return slot.item;
+}
+let lastTick = 0;
+async function spinSlot(slot, finalId, delay) {
+  await wait(delay);
+  slot.busy = true;
+  const n = 4 + Math.floor(rand(3));
+  for (let k = 0; k < n; k++) {
+    const it = setSlotItem(slot, k === n - 1 ? finalId : randomDisplayId());
+    if (clock.real - lastTick > 0.045) { lastTick = clock.real; sfx.tick(slot.index + k); }
+    await tween(0.085, (e) => { it.rotation.y = (1 - e) * -1.5; it.scale.setScalar(0.65 + 0.35 * e); }, E.out);
+  }
+  const it = slot.item, base = slot.halo.material.opacity;
+  await tween(0.3, (e, k) => { it.scale.setScalar(1 + Math.sin(k * Math.PI) * 0.22); slot.halo.material.opacity = base + (1 - k) * 0.6; slot.halo.scale.setScalar(0.62 + (1 - k) * 0.3); }, E.out);
+  slot.busy = false;
+}
+function shuffleSlots(ids) {
+  const jobs = machine.slots.map((slot) => spinSlot(slot, ids[slot.index], (slot.col + (4 - slot.row)) * 0.075 + rand(0.03)));
+  return Promise.all(jobs).then(() => sfx.settle());
+}
+
+// Decide which slot every drop comes from and what replaces it, working out the
+// starting grid so the pre-drawn items are sitting there when their turn comes.
+function planSlots(dropIds) {
+  const cells = machine.slots.map(() => ({ id: randomDisplayId() }));
+  const initial = [...cells];
+  let last = -1;
+  const steps = dropIds.map((id) => {
+    const natural = cells.map((c, i) => (c.id === id && i !== last ? i : -1)).filter((i) => i >= 0);
+    let s;
+    if (natural.length && Math.random() < 0.75) s = pick(natural);
+    else { do { s = Math.floor(Math.random() * cells.length); } while (s === last && cells.length > 1); cells[s].id = id; }
+    const replacement = { id: randomDisplayId() };
+    cells[s] = replacement; last = s;
+    return { slot: s, replacement };
+  });
+  return { initial, steps };
+}
+
+// ---- tray ------------------------------------------------------------------------
+let pile = [], pileOrder = [];
+function pileSpot(i) {
+  const b = machine.trayBox, per = 6, layer = Math.floor(i / per), k = pileOrder[i % per];
+  return new THREE.Vector3(lerp(b.x0, b.x1, (k + 0.5) / per) + rand(-0.04, 0.04), b.y + layer * 0.09, b.z - layer * 0.2 + rand(-0.04, 0.04));
+}
+function clearTray() {
+  const old = pile; pile = []; pileOrder = shuffle([0, 1, 2, 3, 4, 5]);
+  old.forEach((it, i) => tween(0.22, (k) => it.scale.setScalar(Math.max(0.001, it.userData.s0 * (1 - k))), E.inBack).then(() => disposeItem(it)));
+}
+
+// ---- coin ------------------------------------------------------------------------
+let coin;
+function coinFly() {
+  coin ||= mesh(new THREE.CylinderGeometry(0.11, 0.11, 0.025, 24), new THREE.MeshStandardMaterial({ color: 0xffc533, metalness: 1, roughness: 0.2, emissive: 0x8a5200, emissiveIntensity: 0.7 }));
+  scene.add(coin);
+  const from = camera.position.clone().lerp(machine.coinSlot, 0.45); from.y -= 1.6;
+  const to = machine.coinSlot;
+  const bz = (machine.button.userData.z ??= machine.button.position.z);
+  tween(0.25, (e, k) => { machine.button.position.z = bz - Math.sin(k * Math.PI) * 0.035; });
+  return tween(0.38, (e, k) => {
+    coin.position.lerpVectors(from, to, e); coin.position.y += Math.sin(k * Math.PI) * 0.9;
+    coin.rotation.set(Math.PI / 2 + k * 9, k * 5, 0); coin.scale.setScalar(1.6 - e * 0.9);
+  }, E.inOut).then(() => { coin.removeFromParent(); vfx.burst(to, 0xffd23f, 14, { speed: 1.4, size: 0.1 }); vfx.ring(to, 0xffd23f, 0.5, 0.35); });
+}
+
+// ---- the round -------------------------------------------------------------------
+let state = 'loading';
+let forced = null;
+
+async function rumble(dur) {
+  sfx.rumbleStart(); machine.state.chase = 3; machine.setScreen('HERE WE GO', '• • •', '#ffd23f');
+  await tween(dur, (e, k) => {
+    const a = Math.sin(k * Math.PI) * 0.035 + 0.01;
+    machine.body.position.set(rand(-a, a), rand(-a, a) * 0.5, 0); machine.body.rotation.z = rand(-a, a) * 0.25;
+    for (const s of machine.slots) if (s.item) s.item.rotation.z = rand(-a, a) * 4;
+    rig.trauma = Math.max(rig.trauma, 0.25);
+  }, E.linear);
+  machine.body.position.set(0, 0, 0); machine.body.rotation.z = 0;
+  for (const s of machine.slots) if (s.item) s.item.rotation.z = 0;
+  sfx.rumbleStop();
+}
+
+function refill(slot, id) {
+  return wait(0.16).then(async () => {
+    slot.holder.position.copy(slot.home);
+    const it = setSlotItem(slot, id); it.scale.setScalar(0.001);
+    await tween(0.32, (e) => { it.scale.setScalar(Math.max(0.001, e)); it.rotation.y = (1 - e) * 2; slot.coil.rotation.z = -(1 - e) * 2; }, E.outBack);
+    slot.busy = false;
+  });
+}
+
+const HERO = new THREE.Vector3(-0.25, 3.25, 2.5);
+async function heroMoment(item, id, tier, cents) {
+  const legendary = tier === 4, color = TIERS[tier].color, S = legendary ? 3.6 : 2.9;
+  ui.vignette(true); machine.state.beacon = 1; machine.state.chase = 4;
+  sfx.riser(legendary ? 1.0 : 0.6);
+  const start = item.position.clone();
+  focusCam(start, Math.min(rig.dist * 0.6, 7.5), 0.4);
+  await tween(legendary ? 1.0 : 0.6, (e, k) => {
+    item.position.set(start.x + Math.sin(k * 70) * 0.014 * k, start.y + Math.cos(k * 83) * 0.01 * k, start.z);
+    item.scale.setScalar(1 + 0.2 * k); if (Math.random() < 0.6) vfx.trail(item.position, color, 0.12);
+    rig.trauma = Math.max(rig.trauma, 0.15 + k * 0.2);
+  }, E.linear);
+  ui.flash(); sfx.tier(tier); rig.trauma = 0.7;
+  vfx.burst(start, color, 36, { speed: 3 }); vfx.ring(start, color, 1.6, 0.5);
+  focusCam(HERO, Math.min(rig.dist * 0.7, legendary ? 5.8 : 6.6), 0.5);
+  const r0 = item.rotation.clone();
+  await tween(0.55, (e) => {
+    item.position.lerpVectors(start, HERO, e); item.scale.setScalar(lerp(1.2, S, e));
+    item.rotation.set(r0.x * (1 - e), e * Math.PI * 4, r0.z * (1 - e));
+  }, E.outCubic);
+  vfx.sunburst(HERO.clone().setZ(HERO.z - 0.7), color, S * 2.3);
+  vfx.burst(HERO, 0xffffff, 40, { speed: 3.5, size: 0.16 });
+  vfx.confetti(HERO.clone().setY(HERO.y - 0.6), legendary ? 160 : 70, { up: 6.5, speed: 5 });
+  ui.callout(id, cents, legendary ? 2.2 : 1.5, true);
+  ui.banner({ kicker: ITEM[id].name, title: legendary ? 'LEGENDARY!' : 'EPIC!', color, hold: legendary ? 1.7 : 1.0, small: true, low: true });
+  sfx.shimmer();
+  if (legendary) { wait(0.5).then(() => { vfx.coinFountain(new THREE.Vector3(-0.3, 0.6, 1.2), 50); vfx.confettiRain(120); sfx.shimmer(); }); }
+  await tween(legendary ? 2.0 : 1.15, (e, k) => {
+    item.rotation.y = k * Math.PI * (legendary ? 4 : 2); item.position.y = HERO.y + Math.sin(k * Math.PI * 3) * 0.06;
+    item.scale.setScalar(S * (1 + Math.sin(k * Math.PI * 6) * 0.025));
+    if (Math.random() < 0.5) vfx.trail(tmpV.set(HERO.x + rand(-0.9, 0.9), HERO.y + rand(-0.9, 0.9), HERO.z + 0.2), Math.random() < 0.5 ? color : 0xffffff, 0.16);
+  }, E.linear);
+  vfx.sunburstOff(); ui.vignette(false); unfocusCam(0.5);
+  machine.state.beacon = 0; machine.state.chase = 3;
+  return S;
+}
+
+async function dropOne(step, drop, index, betCents) {
+  const slot = machine.slots[step.slot], item = slot.item, id = drop.id, tier = ITEM[id].tier, color = TIERS[tier].color;
+  const cents = (drop.units * betCents) / UNITS_PER_BET;
+  slot.busy = true;
+  // push out of the coil
+  const pushDur = [0.24, 0.3, 0.45, 0.5, 0.6][tier];
+  sfx.whirr(pushDur);
+  const haloBase = slot.halo.material.opacity;
+  if (tier >= 1) vfx.ring(slot.home, color, 0.5 + tier * 0.12, 0.4);
+  await tween(pushDur, (e, k) => {
+    slot.coil.rotation.z = -e * Math.PI * 2;
+    slot.holder.position.z = lerp(slot.home.z, machine.dropZ, e);
+    item.rotation.y = Math.sin(k * Math.PI * 4) * 0.12 * (1 + tier);
+    slot.halo.material.opacity = haloBase + Math.sin(k * Math.PI) * 0.7;
+  }, E.inOut);
+  slot.halo.material.opacity = haloBase;
+  scene.attach(item); slot.item = null;
+  refill(slot, step.replacement.id);
+
+  let s0 = 1;
+  if (tier >= 3) s0 = await heroMoment(item, id, tier, cents);
+
+  // fall into the tray
+  const from = item.position.clone(), to = pileSpot(pile.length), fromRot = item.rotation.clone();
+  const toRot = new THREE.Euler(rand(-0.25, 0.1), rand(-0.5, 0.5), rand(-0.45, 0.45));
+  const spin = pick([-1, 1]) * (2 + Math.floor(rand(2))) * Math.PI;
+  if (tier >= 3) {
+    sfx.whoosh();
+    await tween(0.45, (e, k) => {
+      item.position.lerpVectors(from, to, e); item.position.y += Math.sin(k * Math.PI) * 0.5; item.position.z += Math.sin(k * Math.PI) * 0.6;
+      item.scale.setScalar(lerp(s0, 1, e)); item.rotation.set(lerp(fromRot.x, toRot.x, e), toRot.y + (1 - e) * spin, lerp(fromRot.z, toRot.z, e));
+      vfx.trail(item.position, color, 0.14);
+    }, E.in);
+  } else {
+    const h = from.y - to.y, dur = Math.sqrt((2 * h) / 26);
+    await tween(dur, (e, k) => {
+      item.position.set(lerp(from.x, to.x, k), from.y - h * e, lerp(from.z, to.z, k * k));
+      item.rotation.set(lerp(fromRot.x, toRot.x, k) + (1 - k) * spin * 0.5, lerp(fromRot.y, toRot.y, k), toRot.z + (1 - k) * spin);
+      if (tier >= 1 && Math.random() < 0.35 + tier * 0.3) vfx.trail(item.position, color, 0.07 + tier * 0.03);
+    }, E.in);
+  }
+  // land
+  item.userData.s0 = 1; pile.push(item);
+  sfx.thunk(tier); sfx.tier(tier < 3 ? tier : 0);
+  rig.trauma = Math.min(1, rig.trauma + 0.2 + tier * 0.17);
+  vfx.burst(to, tier ? color : 0xffffff, 8 + tier * 10, { speed: 1.6 + tier * 0.5, size: 0.1 + tier * 0.02, up: 1.2 });
+  if (tier >= 2) vfx.ring(to, color, 0.8 + tier * 0.3, 0.45);
+  if (tier >= 3) { vfx.confetti(to, 50 + tier * 20, { up: 5 }); ui.flash(); }
+  tween(0.3, (e, k) => { const b = Math.sin(k * Math.PI); item.position.y = to.y + b * (0.07 + tier * 0.015); item.scale.set(1 + (1 - k) * 0.18, 1 - (1 - k) * 0.22, 1 + (1 - k) * 0.18); }, E.out);
+
+  // score it
+  const p = toScreen(tmpV.set(to.x, to.y + 0.35, to.z + 0.3));
+  ui.popup(p.x, p.y, cents, color, tier);
+  ui.addWin(cents, color); ui.feedAdd(id);
+  if (tier === 2) ui.callout(id, cents, 1.1);
+  if (ITEM[id].keep) { store.collection[id] = (store.collection[id] || 0) + 1; newKeeps++; ui.setBag(newKeeps); }
+  machine.setScreen('WIN', fmt(running += cents), '#7dffb0');
+
+  for (const combo of drop.combos) {
+    await wait(0.3);
+    const bonus = (combo.bonus * betCents) / UNITS_PER_BET;
+    const big = combo.bonus >= 160;
+    sfx.combo(); ui.feedCombo(combo.items);
+    ui.banner({ kicker: 'COMBO', title: combo.name.toUpperCase(), amount: bonus, color: '#ffd23f', hold: 1.25, icons: combo.items, small: true });
+    for (const it of pile) if (combo.items.includes(it.userData.itemId)) { const y0 = it.position.y; tween(0.5, (e, k) => { it.position.y = y0 + Math.sin(k * Math.PI) * 0.22; it.rotation.y += 0.25; }); vfx.burst(it.position, 0xffd23f, 14, { speed: 2 }); }
+    vfx.confetti(new THREE.Vector3(-0.35, 1.3, 1), big ? 140 : 70, { up: 6 });
+    if (big) { vfx.coinFountain(new THREE.Vector3(-0.3, 0.6, 1.2), 40); ui.flash(); }
+    machine.state.flash = 1; rig.trauma = Math.min(1, rig.trauma + 0.4);
+    ui.addWin(bonus, '#ffd23f');
+    machine.setScreen('COMBO!', fmt(running += bonus), '#ffd23f');
+    await wait(1.25);
+  }
+  await wait([0.06, 0.1, 0.25, 0.25, 0.35][tier]);
+}
+
+let running = 0, newKeeps = 0;
+async function finale(round, betCents) {
+  const cents = (round.units * betCents) / UNITS_PER_BET, m = round.mult;
+  const level = m >= 250 ? 4 : m >= 50 ? 3 : m >= 10 ? 2 : m >= 1 ? 1 : 0;
+  store.balance += cents; store.stats.rounds++; store.stats.best = Math.max(store.stats.best, cents); save();
+  ui.setBalance(store.balance);
+  sfx.win(level);
+  const front = new THREE.Vector3(-0.3, 0.6, 1.2);
+  if (level >= 1) {
+    const title = ['', 'NICE!', 'BIG WIN!', 'MEGA WIN!', 'SNACKPOT!'][level];
+    const color = ['', '#2fd67b', '#2f9bff', '#b45cff', '#ffb81a'][level];
+    ui.banner({ title, amount: cents, color, hold: [0, 1.1, 2.2, 3.3, 4.8][level], kicker: level >= 2 ? `${m}× YOUR BET` : null, small: level === 1 });
+    vfx.confetti(front, 40 + level * 50, { up: 5 + level, speed: 4 + level });
+    machine.state.flash = 0.6 + level * 0.8;
+  }
+  if (level >= 2) {
+    machine.state.beacon = 1; ui.flash(); rig.trauma = 0.8;
+    const waves = [0, 0, 3, 6, 10][level];
+    for (let i = 0; i < waves; i++) {
+      wait(i * 0.42).then(() => {
+        vfx.coinFountain(front, 26 + level * 6, { speed: 1 + level * 0.15 }); vfx.confettiRain(50 + level * 20);
+        vfx.confetti(new THREE.Vector3(rand(-2.5, 2.5), rand(1, 4), 1.2), 40);
+        if (level >= 3) { machine.state.flash = 1; rig.trauma = Math.max(rig.trauma, 0.45); sfx.shimmer(); }
+      });
+    }
+  }
+  machine.setScreen(level ? 'YOU WON' : 'PAID', fmt(cents), level ? '#ffd23f' : '#7dffb0');
+  await wait([0.45, 1.1, 2.4, 3.6, 5][level]);
+  machine.state.beacon = 0; machine.state.chase = 1;
+}
+
+async function playRound() {
+  if (state !== 'idle') return;
+  if (store.balance < store.bet) {
+    const affordable = BETS.filter((b) => b <= store.balance);
+    if (affordable.length) { store.bet = affordable[affordable.length - 1]; ui.setBet(store.bet); }
+    else { store.balance = START_BALANCE; ui.setBalance(store.balance); ui.banner({ kicker: 'ON THE HOUSE', title: 'FREE REFILL', amount: START_BALANCE, color: '#2fd67b', hold: 1.4, small: true }); sfx.win(1); save(); return; }
+  }
+  state = 'playing'; clock.scale = 1; running = 0;
+  const betCents = store.bet;
+  store.balance -= betCents; save();
+  ui.setBalance(store.balance); ui.roundStart(); rig.sway = 0.5;
+  const round = drawRound(paytable, secureRandom, DEV ? forced : null);
+  machine.setScreen('GOOD LUCK', fmt(betCents), '#7dffb0');
+  sfx.coin(); coinFly(); clearTray();
+  const plan = planSlots(round.drops.map((d) => d.id));
+  await wait(0.25);
+  sfx.whoosh();
+  await Promise.all([env.regenerate(true), shuffleSlots(plan.initial.map((c) => c.id))]);
+  await rumble(0.75);
+  for (let i = 0; i < round.drops.length; i++) await dropOne(plan.steps[i], round.drops[i], i, betCents);
+  await wait(0.2);
+  await finale(round, betCents);
+  clock.scale = 1; rig.sway = 1;
+  ui.roundEnd(); ui.showPrompt(`${TOUCH ? 'Tap' : 'Click'} anywhere to play again`);
+  state = 'idle';
+}
+
+// ---- input -----------------------------------------------------------------------
+function onPress(e) {
+  unlock();
+  if (e.target.closest?.('[data-ui]') || ui.sheetOpen) return;
+  if (state === 'idle') playRound();
+  else if (state === 'playing' && clock.scale === 1) { clock.scale = 3; ui.setFast(true); }
+}
+function changeBet(dir) {
+  if (state !== 'idle') return;
+  const i = BETS.indexOf(store.bet), n = Math.max(0, Math.min(BETS.length - 1, i + dir));
+  store.bet = BETS[n]; ui.setBet(store.bet); sfx.click(); save();
+  machine.setScreen('BET', fmt(store.bet), '#7dffb0');
+}
+
+// ---- boot ------------------------------------------------------------------------
+async function boot() {
+  await Promise.race([document.fonts.load(`700 40px ${FONT.split(',')[0]}`), new Promise((r) => setTimeout(r, 2500))]);
+  const thumbs = renderThumbs();
+  ui = createUI(thumbs);
+
+  composer = new EffectComposer(renderer, new THREE.WebGLRenderTarget(4, 4, { type: THREE.HalfFloatType, samples: 4 }));
+  composer.addPass(new RenderPass(scene, camera));
+  bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.32, 0.5, 1.05);
+  composer.addPass(bloom);
+  composer.addPass(new OutputPass());
+
+  machine = buildMachine(ledMat, panelMat);
+  scene.add(machine.root);
+  env = buildEnvironment(scene, ledMat, panelMat);
+  vfx = buildVfx(scene, camera);
+  await env.regenerate(false);
+  for (const slot of machine.slots) setSlotItem(slot, randomDisplayId());
+  machine.setScreen('INSERT COIN', fmt(store.bet), '#7dffb0');
+
+  ui.setBalance(store.balance, true); ui.setBet(store.bet); ui.setSound(!store.muted); setMuted(store.muted);
+  resize();
+  addEventListener('resize', resize);
+  addEventListener('orientationchange', () => setTimeout(resize, 200));
+
+  document.addEventListener('pointerdown', onPress);
+  addEventListener('keydown', (e) => { if (e.code === 'Space' || e.code === 'Enter') { e.preventDefault(); unlock(); if (ui.sheetOpen) ui.closeSheet(); else onPress({ target: document.body }); } else if (e.code === 'Escape') ui.closeSheet(); });
+  document.getElementById('bet-up').addEventListener('click', () => changeBet(1));
+  document.getElementById('bet-down').addEventListener('click', () => changeBet(-1));
+  document.getElementById('btn-sound').addEventListener('click', () => { store.muted = !store.muted; setMuted(store.muted); ui.setSound(!store.muted); save(); sfx.click(); });
+  document.getElementById('btn-info').addEventListener('click', () => { newKeeps = 0; ui.setBag(0); ui.openSheet(store); sfx.click(); });
+  canvas.addEventListener('webglcontextlost', (e) => e.preventDefault());
+  canvas.addEventListener('webglcontextrestored', () => location.reload());
+
+  // main loop with a simple quality governor for slower phones
+  let last = performance.now(), frames = 0, acc = 0;
+  const unclamped = DEV && params.has('unclamped');
+  renderer.setAnimationLoop((now) => {
+    const real = Math.min((now - last) / 1000, unclamped ? 0.5 : 0.05); last = now;
+    const dt = updateTweens(real), t = clock.real;
+    machine.update(t, real); env.update(t, real); vfx.update(dt, t); updateTwinklers(t); ui.update(real);
+    for (const s of machine.slots) if (s.item && !s.busy) { s.item.rotation.y = Math.sin(t * 0.9 + s.index * 1.3) * 0.2; s.item.position.y = Math.sin(t * 1.4 + s.index) * 0.008; }
+    updateCamera(t, real);
+    composer.render();
+    if (!document.hidden && !params.has('hq') && quality > 0 && ++frames > 30) {
+      acc += now - (boot.prev ?? now);
+      if (frames === 150) { if (acc / 120 > 30) { quality--; bloom.enabled = quality > 0; if (!quality) renderer.shadowMap.enabled = false; resize(); } frames = 0; acc = 0; }
+    }
+    boot.prev = now;
+  });
+
+  requestAnimationFrame(() => {
+    document.getElementById('loader').classList.add('done');
+    setTimeout(() => document.getElementById('loader').remove(), 600);
+    ui.showPrompt(`${TOUCH ? 'Tap' : 'Click'} anywhere to place bet & play`);
+    state = 'idle';
+  });
+
+  if (DEV) window.__snackpot = { store, clock, rig, play: playRound, force: (m) => { forced = m; }, get state() { return state; }, machine, vfx, scene, get bloom() { return bloom; } };
+}
+boot();
+
+if ('serviceWorker' in navigator && !DEV) addEventListener('load', () => navigator.serviceWorker.register('./sw.js').catch(() => {}));
