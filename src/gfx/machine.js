@@ -4,27 +4,14 @@ import { std, gloss, glow, rbox, mesh, canvasTex, decal, text, rr, grad, rounded
 import { ITEM, TIERS, UNITS_PER_BET } from '../game/math.js';
 
 const PI = Math.PI;
-export const D = 1.7;
+export const W = 3.1, H = 5.8, D = 1.7;
+export const COLS = 4, ROWS = 5;
+const WIN = { x0: -1.33, x1: 1.33, y0: 1.5, y1: 4.8 };
+const TRAY = { x0: -1.33, x1: 0.36, y0: 0.45, y1: 1.25 };
 export const ITEM_SCALE = 1.3; // items are shown oversized so the prizes read clearly
-// Layout depends on the screen: a tall 4x5 cabinet for portrait, a wide 7x3 one
-// for landscape, so the prize grid can fill either shape. Set before building.
-export let W = 3.1, H = 5.8, COLS = 4, ROWS = 5;
-export let WIN = { x0: -1.33, x1: 1.33, y0: 1.5, y1: 4.8 };
-let TRAY, COLW, ROWH, PX, TCX, MY;
-export function configureMachine(wide) {
-  COLS = wide ? 7 : 4; ROWS = wide ? 3 : 5;
-  COLW = 0.665; ROWH = 0.66;
-  const half = (COLS * COLW) / 2;
-  W = half * 2 + 0.44;
-  WIN = { x0: -half, x1: half, y0: 1.5, y1: 1.5 + ROWS * ROWH };
-  H = WIN.y1 + 1.0;
-  MY = WIN.y1 + 0.5; // marquee centre
-  TRAY = { x0: -half, x1: half - 0.97, y0: 0.45, y1: 1.25 };
-  PX = half - 0.43; // control cluster centre x (bottom right, beside the tray)
-  TCX = (TRAY.x0 + TRAY.x1) / 2;
-  return { W, H, COLS, ROWS, WIN, trayCenterX: TCX };
-}
-configureMachine(false);
+const COLW = (WIN.x1 - WIN.x0) / COLS, ROWH = (WIN.y1 - WIN.y0) / ROWS;
+const PX = 0.9; // control cluster centre x (bottom right, beside the tray)
+const TCX = (TRAY.x0 + TRAY.x1) / 2;
 const FZ = D / 2; // front face z
 
 const tagCache = {};
@@ -52,24 +39,23 @@ export function buildMachine(ledMat, panelMat) {
   const front = outer(); front.holes.push(hole(WIN), hole(TRAY));
   const frontGeo = new THREE.ExtrudeGeometry(front, { depth: 0.22, bevelEnabled: true, bevelThickness: 0.035, bevelSize: 0.035, bevelSegments: 4, curveSegments: 16 });
   const frontMesh = mesh(frontGeo, white, 0, 0, FZ - 0.255);
-  const mid = outer(); mid.holes.push(hole({ x0: WIN.x0 - 0.04, x1: WIN.x1 + 0.04, y0: 0.42, y1: WIN.y1 + 0.08 }, 0.05));
+  const mid = outer(); mid.holes.push(hole({ x0: WIN.x0 - 0.04, x1: WIN.x1 + 0.04, y0: 0.42, y1: 4.88 }, 0.05));
   const midMesh = mesh(new THREE.ExtrudeGeometry(mid, { depth: 1.34, bevelEnabled: false, curveSegments: 16 }), white, 0, 0, -0.75);
   const backMesh = mesh(new THREE.ExtrudeGeometry(outer(), { depth: 0.07, bevelEnabled: true, bevelThickness: 0.03, bevelSize: 0.03, bevelSegments: 3, curveSegments: 16 }), white, 0, 0, -0.87);
   for (const m of [frontMesh, midMesh, backMesh]) { m.castShadow = true; body.add(m); }
 
   // interior liner + back wall art
   const cx = (WIN.x0 + WIN.x1) / 2, cw = WIN.x1 - WIN.x0 + 0.07;
-  const ch = WIN.y1 + 0.07 - 0.42, cy = 0.42 + ch / 2;
-  const liner = mesh(new THREE.BoxGeometry(cw, ch, 1.33), std(0x231a52, { r: 0.85, side: THREE.BackSide }), cx, cy, -0.085);
+  const liner = mesh(new THREE.BoxGeometry(cw, 4.45, 1.33), std(0x231a52, { r: 0.85, side: THREE.BackSide }), cx, 2.65, -0.085);
   body.add(liner);
-  const backArt = mesh(new THREE.PlaneGeometry(cw, ch), new THREE.MeshStandardMaterial({
+  const backArt = mesh(new THREE.PlaneGeometry(cw, 4.45), new THREE.MeshStandardMaterial({
     roughness: 0.8,
     map: canvasTex(256, 512, (c) => {
       c.fillStyle = grad(c, 0, 0, 0, 512, ['#3a2a8a', '#1d1647']); c.fillRect(0, 0, 256, 512);
       c.fillStyle = 'rgba(255,255,255,.05)';
       for (let i = 0; i < 9; i++) for (let j = 0; j < 17; j++) { c.beginPath(); c.arc(i * 32 + (j % 2) * 16, j * 32, 6, 0, 7); c.fill(); }
     }),
-  }), cx, cy, -0.74);
+  }), cx, 2.65, -0.74);
   body.add(backArt);
 
   // --- shelves, coils, slots ----------------------------------------------
@@ -101,8 +87,7 @@ export function buildMachine(ledMat, panelMat) {
   }
   // interior light bars
   for (const sx of [WIN.x0 + 0.005, WIN.x1 - 0.005]) body.add(mesh(new THREE.BoxGeometry(0.025, WIN.y1 - WIN.y0 - 0.1, 0.03), glow(0xffffff, 1.0), sx, (WIN.y0 + WIN.y1) / 2, 0.52));
-  const inLight = new THREE.PointLight(0xfff4ff, 1.4, 6, 1.5); inLight.position.set(cx, WIN.y1 - 1.0, 0.6); body.add(inLight);
-  if (COLS > 5) for (const sx of [-1, 1]) { const l = new THREE.PointLight(0xfff4ff, 1.3, 5, 1.5); l.position.set(sx * 1.5, WIN.y1 - 0.9, 0.6); body.add(l); }
+  const inLight = new THREE.PointLight(0xfff4ff, 1.4, 6, 1.5); inLight.position.set(cx, 3.2, 0.52); body.add(inLight);
   const inLight2 = new THREE.PointLight(0xfff4ff, 1.1, 5, 1.5); inLight2.position.set(cx, 1.9, 0.52); body.add(inLight2);
 
   // glass
@@ -131,10 +116,10 @@ export function buildMachine(ledMat, panelMat) {
   body.add(mesh(new THREE.BoxGeometry(TRAY.x1 - TRAY.x0 - 0.06, 0.03, 0.03), ledMat, TCX, TRAY.y1 + 0.02, 0.5));
   const trayLight = new THREE.PointLight(0xffffff, 2.2, 3, 1.5); trayLight.position.set(TCX, 1.05, 0.75); body.add(trayLight);
   const fascia = decal(1.5, 0.15, canvasTex(512, 52, (c) => { text(c, '▼   GRAB YOUR SNACKS   ▼', 256, 28, 30, '#b9bfd6', { weight: 600 }); }));
-  fascia.position.set(TCX, 1.375, FZ + 0.037); if (TRAY.x1 - TRAY.x0 < 1.6) fascia.scale.setScalar(0.9); body.add(fascia);
+  fascia.position.set(TCX, 1.375, FZ + 0.037); body.add(fascia);
 
   // --- marquee -----------------------------------------------------------
-  body.add(mesh(rbox(2.72, 0.66, 0.08, 0.1), dark, 0, MY, FZ + 0.03));
+  body.add(mesh(rbox(2.72, 0.66, 0.08, 0.1), dark, 0, 5.3, FZ + 0.03));
   const signTex = canvasTex(1024, 232, (c) => {
     c.fillStyle = grad(c, 0, 0, 0, 232, ['#2b1c70', '#150d3d']); c.fillRect(0, 0, 1024, 232);
     c.font = `700 168px ${FONT}`; c.textAlign = 'center'; c.textBaseline = 'middle';
@@ -143,13 +128,13 @@ export function buildMachine(ledMat, panelMat) {
     c.fillStyle = grad(c, 0, 50, 0, 200, ['#fff7b0', '#ffc21a']); c.fillText('SNACKPOT', 512, 124);
   });
   const signMat = new THREE.MeshBasicMaterial({ map: signTex, toneMapped: false }); signMat.color.setScalar(1.15);
-  body.add(mesh(new THREE.PlaneGeometry(2.56, 0.52), signMat, 0, MY, FZ + 0.075));
+  body.add(mesh(new THREE.PlaneGeometry(2.56, 0.52), signMat, 0, 5.3, FZ + 0.075));
   const bulbPos = [];
   const bw = 2.72, bh = 0.66, nx = 17, ny = 3;
-  for (let i = 0; i <= nx; i++) bulbPos.push([-bw / 2 + (i / nx) * bw, MY + bh / 2]);
-  for (let i = 1; i <= ny; i++) bulbPos.push([bw / 2, MY + bh / 2 - (i / (ny + 1)) * bh]);
-  for (let i = nx; i >= 0; i--) bulbPos.push([-bw / 2 + (i / nx) * bw, MY - bh / 2]);
-  for (let i = ny; i >= 1; i--) bulbPos.push([-bw / 2, MY + bh / 2 - (i / (ny + 1)) * bh]);
+  for (let i = 0; i <= nx; i++) bulbPos.push([-bw / 2 + (i / nx) * bw, 5.3 + bh / 2]);
+  for (let i = 1; i <= ny; i++) bulbPos.push([bw / 2, 5.3 + bh / 2 - (i / (ny + 1)) * bh]);
+  for (let i = nx; i >= 0; i--) bulbPos.push([-bw / 2 + (i / nx) * bw, 5.3 - bh / 2]);
+  for (let i = ny; i >= 1; i--) bulbPos.push([-bw / 2, 5.3 + bh / 2 - (i / (ny + 1)) * bh]);
   const bulbs = new THREE.InstancedMesh(new THREE.SphereGeometry(0.036, 10, 8), new THREE.MeshBasicMaterial({ toneMapped: false }), bulbPos.length);
   const mtx = new THREE.Matrix4();
   bulbPos.forEach(([x, y], i) => { mtx.setPosition(x, y, FZ + 0.075); bulbs.setMatrixAt(i, mtx); bulbs.setColorAt(i, new THREE.Color(1, 1, 1)); });
@@ -160,7 +145,7 @@ export function buildMachine(ledMat, panelMat) {
   beacon.add(mesh(new THREE.CylinderGeometry(0.16, 0.19, 0.1, 24), chrome, 0, 0.05, 0));
   const domeMat = new THREE.MeshBasicMaterial({ color: 0x661420, toneMapped: false, transparent: true, opacity: 0.92 });
   const dome = mesh(new THREE.SphereGeometry(0.14, 20, 12, 0, PI * 2, 0, PI / 2), domeMat, 0, 0.1, 0); dome.scale.y = 1.25;
-  beacon.add(dome); beacon.position.set(-W / 2 + 0.5, H, 0.1); body.add(beacon);
+  beacon.add(dome); beacon.position.set(-1.05, H, 0.1); body.add(beacon);
 
   // --- control cluster (bottom right) ---------------------------------------
   const pz = FZ + 0.035;
@@ -194,7 +179,7 @@ export function buildMachine(ledMat, panelMat) {
 
   // kick plate + feet
   body.add(mesh(rbox(W - 0.5, 0.2, 0.03, 0.05), std(0xdfe3f0, { r: 0.4, m: 0.4 }), 0, 0.22, FZ + 0.03));
-  for (const sx of [-1, 1]) for (const sz of [-1, 1]) { const f = mesh(new THREE.CylinderGeometry(0.1, 0.12, 0.1, 16), dark, sx * (W / 2 - 0.35), -0.04, sz * 0.6); f.castShadow = true; root.add(f); }
+  for (const sx of [-1, 1]) for (const sz of [-1, 1]) { const f = mesh(new THREE.CylinderGeometry(0.1, 0.12, 0.1, 16), dark, sx * 1.2, -0.04, sz * 0.6); f.castShadow = true; root.add(f); }
 
   // --- behaviour ---------------------------------------------------------
   const col = new THREE.Color();
@@ -228,6 +213,6 @@ export function buildMachine(ledMat, panelMat) {
     coinSlot: new THREE.Vector3(CX, CY, pz + 0.05),
     trayBox: { x0: TRAY.x0 + 0.02, x1: TRAY.x1 - 0.02, floor: 0.5, top: TRAY.y1, zBack: -0.3, zFront: 0.38 },
     dropZ: 0.44,
-    center: new THREE.Vector3(0, H / 2, 0), trayCenterX: TCX,
+    center: new THREE.Vector3(0, H / 2, 0),
   };
 }

@@ -11,7 +11,7 @@ import { ITEMS, ITEM, TIERS, UNITS_PER_BET, DEFAULT_RTP, createPaytable, drawRou
 import { clock, tween, wait, updateTweens, E, lerp, rand, pick } from './gfx/anim.js';
 import { glow, mesh, FONT } from './gfx/util.js';
 import { makeItem, disposeItem, updateTwinklers } from './gfx/models.js';
-import { buildMachine, configureMachine, W as MACHINE_W, WIN, ROWS, D as MACHINE_D, ITEM_SCALE as IS } from './gfx/machine.js';
+import { buildMachine, H as MACHINE_H, W as MACHINE_W, D as MACHINE_D, ITEM_SCALE as IS } from './gfx/machine.js';
 import { buildEnvironment } from './gfx/environment.js';
 import { buildVfx } from './gfx/vfx.js';
 import { createTray } from './gfx/tray.js';
@@ -64,7 +64,6 @@ const rig = { dist: 12, target: new THREE.Vector3(0, 2.95, 0), focus: 0, fTarget
 
 function resize() {
   const w = innerWidth, h = innerHeight, aspect = w / h;
-  if (wantWide() !== wideLayout) { relayoutPending = true; if (state === 'idle') { location.reload(); return; } }
   const pr = Math.min(devicePixelRatio || 1, quality >= 2 ? 2 : quality === 1 ? 1.5 : 1);
   renderer.setPixelRatio(pr); renderer.setSize(w, h, false);
   composer.setPixelRatio(pr); composer.setSize(w, h);
@@ -74,22 +73,21 @@ function resize() {
   const portrait = w < h;
   camera.fov = portrait ? 56 : 44;
   camera.updateProjectionMatrix();
-  rig.yaw0 = portrait ? 0.1 : 0.2; rig.pitch0 = -0.1;
+  rig.yaw0 = portrait ? 0.17 : 0.3; rig.pitch0 = -0.12;
   const t = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
-  // leave room for the bet strip below and, in portrait, the balance/total above
-  const yLo = -1 + (2 * Math.min(portrait ? 86 : 70, h * 0.12)) / h, yHi = 1 - (2 * Math.min(122, h * 0.16)) / h, xLim = 0.99;
-  rig.target.set(0, (FRAME.y0 + FRAME.y1) / 2, MACHINE_D / 2);
+  const yLo = -1 + (2 * Math.min(70, h * 0.1)) / h, yHi = 0.985, xLim = 0.985;
+  rig.target.set(0, MACHINE_H / 2, 0);
   let bb;
   for (let pass = 0; pass < 5; pass++) {
     let lo = 2, hi = 90;
     for (let k = 0; k < 24; k++) { const mid = (lo + hi) / 2; bb = measure(mid); if (bb.x1 - bb.x0 <= 2 * xLim && bb.y1 - bb.y0 <= yHi - yLo) hi = mid; else lo = mid; }
     rig.dist = hi; bb = measure(hi);
     camRight.setFromMatrixColumn(camera.matrixWorld, 0); camUp.setFromMatrixColumn(camera.matrixWorld, 1);
-    rig.target.addScaledVector(camRight, ((bb.x0 + bb.x1) / 2) * rig.dist * t * aspect).addScaledVector(camUp, (bb.y0 - yLo) * rig.dist * t);
+    rig.target.addScaledVector(camRight, ((bb.x0 + bb.x1) / 2) * rig.dist * t * aspect).addScaledVector(camUp, ((bb.y0 + bb.y1) / 2 - (yLo + yHi) / 2) * rig.dist * t);
   }
   bb = measure(rig.dist);
-  const ml = toScreen(tmpV.set(-MACHINE_W / 2, 3, MACHINE_D / 2)).x - 10, mr = toScreen(tmpV.set(MACHINE_W / 2, 3, MACHINE_D / 2)).x + 10, fp = toScreen(tmpV.set(machine.trayCenterX, 1.375, MACHINE_D / 2));
-  document.body.classList.remove('wide');
+  const ml = ((bb.x0 + 1) / 2) * w, mr = ((bb.x1 + 1) / 2) * w, fp = toScreen(tmpV.set(-0.485, 1.375, MACHINE_D / 2));
+  document.body.classList.toggle('wide', Math.min(ml, w - mr) >= 230);
   const css = document.documentElement.style;
   css.setProperty('--ml', `${ml}px`); css.setProperty('--mr', `${mr}px`); css.setProperty('--fx', `${fp.x}px`); css.setProperty('--fy', `${fp.y}px`);
   camera.updateProjectionMatrix();
@@ -103,17 +101,11 @@ function poseCamera(target, dist, yaw, pitch) {
   camPos.set(Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), Math.cos(yaw) * Math.cos(pitch)).multiplyScalar(dist).add(target);
   camera.position.copy(camPos); camera.lookAt(target); camera.updateMatrixWorld();
 }
-// What the camera frames: the prize window and the trough below it, on the
-// machine's front face. The rest of the cabinet is allowed to run off-screen.
-const FRAME = { x: 1.42, y0: 0.38, y1: 4.9 };
-const wantWide = () => innerWidth / innerHeight > 1.15;
-let wideLayout = false;
-// screen-space bounds (NDC) of that frame for a given camera distance
+// screen-space bounds (NDC) of the machine for a given camera distance
 function measure(dist) {
   poseCamera(rig.target, dist, rig.yaw0, rig.pitch0);
   const b = { x0: 9, x1: -9, y0: 9, y1: -9 };
-  for (const x of [-FRAME.x, FRAME.x]) for (const y of [FRAME.y0, FRAME.y1]) {
-    const z = MACHINE_D / 2;
+  for (const x of [-MACHINE_W / 2, MACHINE_W / 2]) for (const y of [0, MACHINE_H + 0.25]) for (const z of [-MACHINE_D / 2, MACHINE_D / 2]) {
     tmpV.set(x, y, z).project(camera);
     b.x0 = Math.min(b.x0, tmpV.x); b.x1 = Math.max(b.x1, tmpV.x); b.y0 = Math.min(b.y0, tmpV.y); b.y1 = Math.max(b.y1, tmpV.y);
   }
@@ -123,7 +115,7 @@ function updateCamera(t, dt) {
   const f = rig.focus;
   camTgt.lerpVectors(rig.target, rig.fTarget, f);
   const dist = lerp(rig.dist, rig.fDist, f);
-  const yaw = rig.yaw0 * (1 - f * 0.5) + Math.sin(t * 0.33) * 0.03 * rig.sway * (1 - f * 0.7), pitch = rig.pitch0 * (1 - f * 0.4) + Math.sin(t * 0.21) * 0.01;
+  const yaw = rig.yaw0 * (1 - f * 0.5) + Math.sin(t * 0.33) * 0.05 * rig.sway * (1 - f * 0.7), pitch = rig.pitch0 * (1 - f * 0.4) + Math.sin(t * 0.21) * 0.01;
   camPos.set(Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), Math.cos(yaw) * Math.cos(pitch)).multiplyScalar(dist).add(camTgt);
   rig.trauma = Math.max(0, rig.trauma - dt * 1.8);
   const s = rig.trauma * rig.trauma * 0.22;
@@ -181,7 +173,7 @@ async function spinSlot(slot, finalId, delay) {
   slot.busy = false;
 }
 function shuffleSlots(ids) {
-  const jobs = machine.slots.map((slot) => spinSlot(slot, ids[slot.index], (slot.col + (ROWS - 1 - slot.row)) * 0.075 + rand(0.03)));
+  const jobs = machine.slots.map((slot) => spinSlot(slot, ids[slot.index], (slot.col + (4 - slot.row)) * 0.075 + rand(0.03)));
   return Promise.all(jobs).then(() => sfx.settle());
 }
 
@@ -224,7 +216,7 @@ function coinFly() {
 }
 
 // ---- the round -------------------------------------------------------------------
-let state = 'loading', relayoutPending = false;
+let state = 'loading';
 let forced = null;
 
 async function rumble(dur) {
@@ -417,7 +409,6 @@ async function playRound() {
   await wait(0.2);
   await finale(round, betCents);
   clock.scale = 1; rig.sway = 1;
-  if (relayoutPending) { location.reload(); return; }
   ui.roundEnd(); ui.showPrompt(`${TOUCH ? 'Tap' : 'Click'} anywhere to play again`);
   state = 'idle';
 }
@@ -448,11 +439,9 @@ async function boot() {
   composer.addPass(bloom);
   composer.addPass(new OutputPass());
 
-  wideLayout = wantWide(); configureMachine(wideLayout);
-  FRAME.x = WIN.x1 + 0.09; FRAME.y1 = WIN.y1 + 0.1; HERO.y = (WIN.y0 + WIN.y1) / 2 + 0.05;
   machine = buildMachine(ledMat, panelMat);
   scene.add(machine.root);
-  env = buildEnvironment(scene, ledMat, panelMat, MACHINE_W);
+  env = buildEnvironment(scene, ledMat, panelMat);
   vfx = buildVfx(scene, camera);
   tray = createTray(machine.trayBox);
   await env.regenerate(false);
