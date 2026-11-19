@@ -6,7 +6,7 @@ export const fmt = (cents) => (cents / 100).toLocaleString('en-US', { minimumFra
 const mult = (units) => { const v = units / UNITS_PER_BET; return `×${Number.isInteger(v) ? v : v.toFixed(2).replace(/0$/, '')}`; };
 
 export function createUI(thumbs) {
-  const el = { balance: $('balance'), win: $('win'), winValue: $('win-value'), callout: $('callout'), banner: $('banner'), popups: $('popups'), feed: $('feed'), prompt: $('prompt'), bet: $('bet'), betPill: document.querySelector('.bet'), modal: $('modal'), body: $('modal-body'), bag: $('bag-count'), fast: $('fast') };
+  const el = { balance: $('balance'), win: $('win'), winValue: $('win-value'), callout: $('callout'), banner: $('banner'), popups: $('popups'), prompt: $('prompt'), bet: $('bet'), betPill: document.querySelector('.bet'), modal: $('modal'), body: $('modal-body'), bag: $('bag-count'), fast: $('fast') };
   const nums = { balance: { shown: 0, target: 0, node: el.balance }, win: { shown: 0, target: 0, node: el.winValue } };
 
   function update(dt) {
@@ -23,7 +23,7 @@ export function createUI(thumbs) {
 
   function roundStart() {
     nums.win.shown = nums.win.target = 0; el.winValue.textContent = fmt(0); el.winValue.style.setProperty('--c', '#ff3d8b');
-    el.win.classList.add('on'); el.feed.innerHTML = ''; el.banner.innerHTML = ''; el.callout.innerHTML = '';
+    el.win.classList.add('on'); el.banner.innerHTML = ''; el.callout.innerHTML = '';
     el.prompt.classList.remove('on'); el.betPill.classList.add('locked');
   }
   function addWin(c, color) { nums.win.target += c; if (color) el.winValue.style.setProperty('--c', color); restart(el.winValue, 'pop'); }
@@ -47,13 +47,23 @@ export function createUI(thumbs) {
     const letters = [...title].map((ch, i) => `<span style="--i:${i}">${ch === ' ' ? '&nbsp;' : ch}</span>`).join('');
     el.banner.innerHTML = `<div class="banner ${small ? 'small' : ''}" style="--c:${color};--hold:${hold}s">${icons ? `<div class="icons">${icons.map((i) => `<img src="${thumbs[i]}" alt="">`).join('')}</div>` : ''}${kicker ? `<div class="k">${kicker}</div>` : ''}<div class="title">${letters}</div>${amount != null ? `<div class="amt">+${fmt(amount)}</div>` : ''}</div>`;
   }
-  function feedAdd(id) {
-    const c = document.createElement('div');
-    c.className = 'chip'; c.dataset.id = id; c.style.setProperty('--c', TIERS[ITEM[id].tier].color);
-    c.innerHTML = `<img src="${thumbs[id]}" alt="${ITEM[id].name}">`;
-    el.feed.append(c);
+  // A prize's symbol bursts out of the trough and flies up into the total.
+  function symbolPop(x, y, id) {
+    const tier = ITEM[id].tier, size = 54 + tier * 14;
+    const d = document.createElement('div');
+    d.className = `sym t${tier}`; d.style.cssText = `left:${x}px;top:${y}px;width:${size}px;height:${size}px;--c:${TIERS[tier].color}`;
+    d.innerHTML = `<i class="rays"></i><i class="ring"></i><img src="${thumbs[id]}" alt="">`;
+    el.popups.append(d);
+    const r = el.winValue.getBoundingClientRect(), dx = r.left + r.width / 2 - x, dy = r.top + r.height / 2 - y;
+    const hold = 0.34 + tier * 0.05, total = 950 + tier * 120;
+    const anim = d.animate([
+      { transform: 'translate(-50%,-50%) scale(.2) rotate(-25deg)', opacity: 0 },
+      { transform: 'translate(-50%,-90%) scale(1.25) rotate(6deg)', opacity: 1, offset: 0.16 },
+      { transform: 'translate(-50%,-80%) scale(1) rotate(0deg)', opacity: 1, offset: hold },
+      { transform: `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px)) scale(.35) rotate(20deg)`, opacity: 0.9 },
+    ], { duration: total, easing: 'cubic-bezier(.4,0,.5,1)', fill: 'forwards' });
+    anim.onfinish = () => { d.remove(); restart(el.winValue, 'pop'); };
   }
-  function feedCombo(ids) { for (const id of ids) { const c = el.feed.querySelector(`.chip[data-id="${id}"]`); if (c) restart(c, 'combo'); } }
   function flash() { restart($('flash'), 'go'); }
   function vignette(on) { $('vignette').classList.toggle('on', on); }
   function setSound(on) { $('btn-sound').classList.toggle('off', !on); }
@@ -81,5 +91,5 @@ export function createUI(thumbs) {
   $('modal-close').addEventListener('click', closeSheet);
   el.modal.addEventListener('click', (e) => { if (e.target === el.modal) closeSheet(); });
 
-  return { update, setBalance, setBet, roundStart, roundEnd, addWin, showPrompt, setFast, popup, callout, banner, feedAdd, feedCombo, flash, vignette, setSound, setBag, openSheet, closeSheet, get sheetOpen() { return !el.modal.hidden; } };
+  return { update, setBalance, setBet, roundStart, roundEnd, addWin, showPrompt, setFast, popup, callout, banner, symbolPop, flash, vignette, setSound, setBag, openSheet, closeSheet, get sheetOpen() { return !el.modal.hidden; } };
 }

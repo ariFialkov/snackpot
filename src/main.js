@@ -60,7 +60,7 @@ const ledMat = glow(0xff3d9a, 1.7);
 const panelMat = new THREE.MeshPhysicalMaterial({ color: 0x7a5cff, roughness: 0.3, clearcoat: 1, clearcoatRoughness: 0.2 });
 
 let composer, bloom, quality = 2, ui, machine, env, vfx, tray;
-const rig = { dist: 12, target: new THREE.Vector3(0, 2.95, 0), focus: 0, fTarget: new THREE.Vector3(), fDist: 7, trauma: 0, sway: 1, yaw0: 0.16, pitch0: -0.11 };
+const rig = { dist: 12, target: new THREE.Vector3(0, 2.95, 0), focus: 0, fTarget: new THREE.Vector3(), fDist: 7, trauma: 0, sway: 1, yaw0: 0.16, pitch0: -0.11, mix: 0, idle: null, play: null };
 
 function resize() {
   const w = innerWidth, h = innerHeight, aspect = w / h;
@@ -68,28 +68,21 @@ function resize() {
   renderer.setPixelRatio(pr); renderer.setSize(w, h, false);
   composer.setPixelRatio(pr); composer.setSize(w, h);
   camera.aspect = aspect;
-  // A low, wide-angle three-quarter view. The distance and aim are solved so the
-  // machine's bounding box fills the screen, leaving a strip for the bet controls.
+  // Two camera poses, each solved so its subject fills the screen:
+  //  - idle: a low three-quarter view of the whole machine
+  //  - play: closer and nearly head-on, framing the prize rows and the trough,
+  //    with room left at the top for the running total
   const portrait = w < h;
   camera.fov = portrait ? 56 : 44;
   camera.updateProjectionMatrix();
-  rig.yaw0 = portrait ? 0.17 : 0.3; rig.pitch0 = -0.12;
+  const strip = -1 + (2 * Math.min(70, h * 0.1)) / h;
+  const full = [], front = [];
+  for (const x of [-1, 1]) for (const y of [0, MACHINE_H + 0.25]) for (const z of [-1, 1]) full.push(new THREE.Vector3((x * MACHINE_W) / 2, y, (z * MACHINE_D) / 2));
+  for (const x of [-1.43, 1.43]) for (const y of [0.36, 4.92]) front.push(new THREE.Vector3(x, y, MACHINE_D / 2));
+  rig.idle = solvePose(full, portrait ? 0.17 : 0.3, -0.12, strip, 0.985);
+  rig.play = solvePose(front, portrait ? 0.05 : 0.09, -0.05, strip, 1 - (2 * Math.min(128, h * 0.17)) / h);
+  blendPose();
   const t = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
-  const yLo = -1 + (2 * Math.min(70, h * 0.1)) / h, yHi = 0.985, xLim = 0.985;
-  rig.target.set(0, MACHINE_H / 2, 0);
-  let bb;
-  for (let pass = 0; pass < 5; pass++) {
-    let lo = 2, hi = 90;
-    for (let k = 0; k < 24; k++) { const mid = (lo + hi) / 2; bb = measure(mid); if (bb.x1 - bb.x0 <= 2 * xLim && bb.y1 - bb.y0 <= yHi - yLo) hi = mid; else lo = mid; }
-    rig.dist = hi; bb = measure(hi);
-    camRight.setFromMatrixColumn(camera.matrixWorld, 0); camUp.setFromMatrixColumn(camera.matrixWorld, 1);
-    rig.target.addScaledVector(camRight, ((bb.x0 + bb.x1) / 2) * rig.dist * t * aspect).addScaledVector(camUp, ((bb.y0 + bb.y1) / 2 - (yLo + yHi) / 2) * rig.dist * t);
-  }
-  bb = measure(rig.dist);
-  const ml = ((bb.x0 + 1) / 2) * w, mr = ((bb.x1 + 1) / 2) * w, fp = toScreen(tmpV.set(-0.485, 1.375, MACHINE_D / 2));
-  document.body.classList.toggle('wide', Math.min(ml, w - mr) >= 230);
-  const css = document.documentElement.style;
-  css.setProperty('--ml', `${ml}px`); css.setProperty('--mr', `${mr}px`); css.setProperty('--fx', `${fp.x}px`); css.setProperty('--fy', `${fp.y}px`);
   camera.updateProjectionMatrix();
   if (scene.fog) { scene.fog.near = rig.dist + 10; scene.fog.far = rig.dist + 75; }
   vfx?.setPointScale((h * pr) / (2 * t));
@@ -101,21 +94,39 @@ function poseCamera(target, dist, yaw, pitch) {
   camPos.set(Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), Math.cos(yaw) * Math.cos(pitch)).multiplyScalar(dist).add(target);
   camera.position.copy(camPos); camera.lookAt(target); camera.updateMatrixWorld();
 }
-// screen-space bounds (NDC) of the machine for a given camera distance
-function measure(dist) {
-  poseCamera(rig.target, dist, rig.yaw0, rig.pitch0);
-  const b = { x0: 9, x1: -9, y0: 9, y1: -9 };
-  for (const x of [-MACHINE_W / 2, MACHINE_W / 2]) for (const y of [0, MACHINE_H + 0.25]) for (const z of [-MACHINE_D / 2, MACHINE_D / 2]) {
-    tmpV.set(x, y, z).project(camera);
-    b.x0 = Math.min(b.x0, tmpV.x); b.x1 = Math.max(b.x1, tmpV.x); b.y0 = Math.min(b.y0, tmpV.y); b.y1 = Math.max(b.y1, tmpV.y);
+// Find the camera distance and aim at which `points` exactly fill the screen
+// region between yLo and yHi (NDC) when viewed from the given angles.
+function solvePose(points, yaw, pitch, yLo, yHi) {
+  const target = new THREE.Vector3(0, 2.9, 0), xLim = 0.985, t = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
+  const measure = (dist) => {
+    poseCamera(target, dist, yaw, pitch);
+    const b = { x0: 9, x1: -9, y0: 9, y1: -9 };
+    for (const p of points) { tmpV.copy(p).project(camera); b.x0 = Math.min(b.x0, tmpV.x); b.x1 = Math.max(b.x1, tmpV.x); b.y0 = Math.min(b.y0, tmpV.y); b.y1 = Math.max(b.y1, tmpV.y); }
+    return b;
+  };
+  let dist = 10;
+  for (let pass = 0; pass < 5; pass++) {
+    let lo = 2, hi = 90;
+    for (let k = 0; k < 24; k++) { const mid = (lo + hi) / 2, bb = measure(mid); if (bb.x1 - bb.x0 <= 2 * xLim && bb.y1 - bb.y0 <= yHi - yLo) hi = mid; else lo = mid; }
+    dist = hi; const bb = measure(dist);
+    camRight.setFromMatrixColumn(camera.matrixWorld, 0); camUp.setFromMatrixColumn(camera.matrixWorld, 1);
+    target.addScaledVector(camRight, ((bb.x0 + bb.x1) / 2) * dist * t * camera.aspect).addScaledVector(camUp, ((bb.y0 + bb.y1) / 2 - (yLo + yHi) / 2) * dist * t);
   }
-  return b;
+  return { target, dist, yaw, pitch };
 }
+function blendPose() {
+  const a = rig.idle, b = rig.play, k = rig.mix;
+  if (!a) return;
+  rig.target.lerpVectors(a.target, b.target, k); rig.dist = lerp(a.dist, b.dist, k);
+  rig.yaw0 = lerp(a.yaw, b.yaw, k); rig.pitch0 = lerp(a.pitch, b.pitch, k);
+}
+const setView = (to, dur) => { const from = rig.mix; return tween(dur, (k) => { rig.mix = lerp(from, to, k); }, E.inOut); };
 function updateCamera(t, dt) {
+  blendPose();
   const f = rig.focus;
   camTgt.lerpVectors(rig.target, rig.fTarget, f);
   const dist = lerp(rig.dist, rig.fDist, f);
-  const yaw = rig.yaw0 * (1 - f * 0.5) + Math.sin(t * 0.33) * 0.05 * rig.sway * (1 - f * 0.7), pitch = rig.pitch0 * (1 - f * 0.4) + Math.sin(t * 0.21) * 0.01;
+  const yaw = rig.yaw0 * (1 - f * 0.5) + Math.sin(t * 0.33) * 0.05 * rig.sway * (1 - rig.mix * 0.6) * (1 - f * 0.7), pitch = rig.pitch0 * (1 - f * 0.4) + Math.sin(t * 0.21) * 0.01;
   camPos.set(Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), Math.cos(yaw) * Math.cos(pitch)).multiplyScalar(dist).add(camTgt);
   rig.trauma = Math.max(0, rig.trauma - dt * 1.8);
   const s = rig.trauma * rig.trauma * 0.22;
@@ -332,7 +343,7 @@ async function dropOne(step, drop, index, betCents) {
   // score it
   const p = toScreen(tmpV.set(to.x, to.y + 0.35, to.z + 0.3));
   ui.popup(p.x, p.y, cents, color, tier);
-  ui.addWin(cents, color); ui.feedAdd(id);
+  ui.addWin(cents, color); ui.symbolPop(p.x, p.y + 20, id);
   if (tier === 2) ui.callout(id, cents, 1.1);
   if (ITEM[id].keep) { store.collection[id] = (store.collection[id] || 0) + 1; newKeeps++; ui.setBag(newKeeps); }
   machine.setScreen('WIN', fmt(running += cents), '#7dffb0');
@@ -341,7 +352,7 @@ async function dropOne(step, drop, index, betCents) {
     await wait(0.3);
     const bonus = (combo.bonus * betCents) / UNITS_PER_BET;
     const big = combo.bonus >= 160;
-    sfx.combo(); ui.feedCombo(combo.items);
+    sfx.combo();
     ui.banner({ kicker: 'COMBO', title: combo.name.toUpperCase(), amount: bonus, color: '#ffd23f', hold: 1.25, icons: combo.items, small: true });
     tray.kick((o) => combo.items.includes(o.userData.itemId), 4.2);
     for (const b of tray.bodies) if (combo.items.includes(b.o.userData.itemId)) vfx.burst(b.o.position, 0xffd23f, 14, { speed: 2 });
@@ -399,7 +410,7 @@ async function playRound() {
   ui.setBalance(store.balance); ui.roundStart(); rig.sway = 0.5;
   const round = drawRound(paytable, secureRandom, DEV ? forced : null);
   machine.setScreen('GOOD LUCK', fmt(betCents), '#7dffb0');
-  sfx.coin(); coinFly(); clearTray();
+  sfx.coin(); coinFly(); clearTray(); setView(1, 1.1);
   const plan = planSlots(round.drops.map((d) => d.id));
   await wait(0.25);
   sfx.whoosh();
@@ -408,7 +419,7 @@ async function playRound() {
   for (let i = 0; i < round.drops.length; i++) await dropOne(plan.steps[i], round.drops[i], i, betCents);
   await wait(0.2);
   await finale(round, betCents);
-  clock.scale = 1; rig.sway = 1;
+  clock.scale = 1; rig.sway = 1; setView(0, 1.4);
   ui.roundEnd(); ui.showPrompt(`${TOUCH ? 'Tap' : 'Click'} anywhere to play again`);
   state = 'idle';
 }
