@@ -142,7 +142,8 @@ const SLOTS = [
 const SKY_SEQ = [[2, 3, 4, 3], [4, 2, 4, 2], [2, 2, 4], [2, 3, 4, 5, 4, 3], [5, 3, 2, 3], [3, 4, 3, 5]];
 const SKY_SHAPES = ['capsule', 'arch', 'tree', 'cone'];
 
-export function buildEnvironment(scene, ledMat, panelMat) {
+export function buildEnvironment(scene, ledMat, panelMat, machineW = 3.1) {
+  const SX = machineW / 3.1;
   const root = new THREE.Group(); scene.add(root);
   const u = { top: { value: C('#6fcfff') }, bottom: { value: C('#ffe6f3') } };
   const sky = mesh(new THREE.SphereGeometry(90, 32, 16), new THREE.ShaderMaterial({
@@ -159,7 +160,9 @@ export function buildEnvironment(scene, ledMat, panelMat) {
 
   // stage under the machine
   const stage = mesh(new THREE.CylinderGeometry(2.7, 2.8, 0.1, 64), gloss(0xe9ebf5, { r: 0.35 }), 0, -0.05, 0); stage.receiveShadow = true;
-  root.add(stage, mesh(new THREE.TorusGeometry(2.76, 0.035, 8, 80).rotateX(PI / 2), ledMat, 0, -0.03, 0));
+  const stageRing = mesh(new THREE.TorusGeometry(2.76, 0.035, 8, 80).rotateX(PI / 2), ledMat, 0, -0.03, 0);
+  stage.scale.x = stageRing.scale.x = SX;
+  root.add(stage, stageRing);
 
   // clouds
   const cloudM = std(0xffffff, { r: 1, fog: false });
@@ -181,7 +184,7 @@ export function buildEnvironment(scene, ledMat, panelMat) {
   function makeProp(id, pal, slot, side) {
     const g = P[id](pal);
     g.traverse((o) => { if (o.isMesh && !o.material.transparent) o.castShadow = true; if (o.userData.bob || o.userData.spin) anims.push(o); });
-    g.position.set(slot.x * side, -0.1, slot.z);
+    g.position.set((slot.x + (SX - 1) * 1.6) * side, -0.1, slot.z);
     g.rotation.y = -side * 0.35;
     g.userData.s = slot.s;
     root.add(g);
