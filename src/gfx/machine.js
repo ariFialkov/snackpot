@@ -78,6 +78,8 @@ export function buildMachine(ledMat, panelMat) {
       const tag = mesh(new THREE.PlaneGeometry(0.29, 0.1), tagMat, x, sy + 0.05, 0.296);
       const halo = new THREE.Sprite(new THREE.SpriteMaterial({ map: haloMap, transparent: true, opacity: 0.3, depthWrite: false, blending: THREE.AdditiveBlending }));
       halo.position.set(x, sy + 0.33, -0.1); halo.scale.setScalar(0.8);
+      const blob = new THREE.Sprite(new THREE.SpriteMaterial({ map: haloMap, color: 0x05031a, transparent: true, opacity: 0.55, depthWrite: false }));
+      blob.position.set(x, sy + 0.05, 0.17); blob.scale.set(0.5, 0.11, 1); body.add(blob);
       const holder = new THREE.Group(); holder.position.set(x, sy + 0.325, 0.17); holder.scale.setScalar(ITEM_SCALE);
       body.add(coil, tag, halo, holder);
       slots.push({ index: slots.length, row: r, col: c, coil, tag, tagMat, halo, holder, item: null, itemId: null, home: holder.position.clone() });
@@ -209,7 +211,7 @@ export function buildMachine(ledMat, panelMat) {
   return {
     root, body, slots, setScreen, update, state, styleSlot, button,
     coinSlot: new THREE.Vector3(CX, CY, pz + 0.05),
-    trayBox: { x0: TRAY.x0 + 0.12, x1: TRAY.x1 - 0.12, y: 0.79, z: 0.4 },
+    trayBox: { x0: TRAY.x0 + 0.02, x1: TRAY.x1 - 0.02, floor: 0.5, top: TRAY.y1, zBack: -0.3, zFront: 0.38 },
     dropZ: 0.44,
     center: new THREE.Vector3(0, H / 2, 0),
   };

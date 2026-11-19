@@ -9,9 +9,9 @@ const B = {};
 
 B.mints = () => {
   const g = new THREE.Group();
-  const tin = mesh(new THREE.CylinderGeometry(0.17, 0.17, 0.07, 40), std(0xeaf6f1, { r: 0.22, m: 0.75 }));
+  const tin = mesh(new THREE.CylinderGeometry(0.17, 0.17, 0.12, 40), std(0xeaf6f1, { r: 0.22, m: 0.75 }));
   tin.rotation.x = PI / 2;
-  const rim = mesh(new THREE.TorusGeometry(0.168, 0.012, 10, 44), std(0xd5e2ea, { r: 0.18, m: 0.95 }), 0, 0, 0.03);
+  const rim = mesh(new THREE.TorusGeometry(0.168, 0.012, 10, 44), std(0xd5e2ea, { r: 0.18, m: 0.95 }), 0, 0, 0.055);
   const lid = decal(0.31, 0.31, canvasTex(256, 256, (c) => {
     c.beginPath(); c.arc(128, 128, 126, 0, 7); c.fillStyle = grad(c, 0, 0, 0, 256, ['#7df0c3', '#19b98a']); c.fill();
     c.strokeStyle = 'rgba(255,255,255,.55)'; c.lineWidth = 9;
@@ -20,8 +20,10 @@ B.mints = () => {
     text(c, 'MINTS', 128, 131, 50, '#0f9b74');
     text(c, '✦ fresh ✦', 128, 196, 22, '#fff', { weight: 600 });
   }), { r: 0.3, m: 0.2 });
-  lid.position.z = 0.0362;
-  g.add(tin, rim, lid);
+  lid.position.z = 0.0612;
+  const tinG = new THREE.Group(); tinG.add(tin, rim, lid, mesh(new THREE.TorusGeometry(0.168, 0.012, 10, 44), rim.material, 0, 0, -0.055));
+  tinG.rotation.set(-0.3, 0.35, 0); tinG.position.y = 0.02;
+  g.add(tinG);
   const mm = std(0xffffff, { r: 0.35 });
   [[-0.12, -0.17, 0.05], [0.13, -0.16, 0.04], [0.02, -0.19, 0.07]].forEach(([x, y, z], i) => {
     const m = mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.016, 16), mm, x, y, z);
@@ -40,7 +42,7 @@ function bag(w, h, d, tex, color) {
   return g;
 }
 
-B.chips = () => bag(0.3, 0.4, 0.13, canvasTex(256, 340, (c) => {
+B.chips = () => bag(0.3, 0.4, 0.21, canvasTex(256, 340, (c) => {
   c.fillStyle = grad(c, 0, 0, 0, 340, ['#ffd83a', '#ff9d1c']); c.fillRect(0, 0, 256, 340);
   c.fillStyle = '#ff4b3a'; c.beginPath(); c.moveTo(0, 70); c.quadraticCurveTo(128, 20, 256, 70); c.lineTo(256, 170); c.quadraticCurveTo(128, 120, 0, 170); c.fill();
   text(c, 'CHIPS', 128, 108, 62, '#fff', { stroke: '#b3201a' });
@@ -55,17 +57,17 @@ B.chips = () => bag(0.3, 0.4, 0.13, canvasTex(256, 340, (c) => {
 B.chocolate = () => {
   const g = new THREE.Group();
   const choc = std(0x6b3a1e, { r: 0.45 });
-  g.add(mesh(rbox(0.22, 0.2, 0.04, 0.012), choc, 0, 0.1, 0));
-  for (let i = 0; i < 2; i++) for (let j = 0; j < 2; j++) g.add(mesh(rbox(0.095, 0.08, 0.02, 0.012), std(0x7d4525, { r: 0.4 }), -0.052 + i * 0.104, 0.065 + j * 0.088, 0.022));
-  g.add(mesh(rbox(0.245, 0.24, 0.058, 0.014), std(0x7a2bd6, { r: 0.3, m: 0.2 }), 0, -0.085, 0));
-  g.add(mesh(rbox(0.25, 0.03, 0.062, 0.008), std(0xffd45a, { r: 0.2, m: 0.95 }), 0, 0.03, 0));
+  g.add(mesh(rbox(0.22, 0.2, 0.075, 0.014), choc, 0, 0.1, 0));
+  for (let i = 0; i < 2; i++) for (let j = 0; j < 2; j++) g.add(mesh(rbox(0.095, 0.08, 0.02, 0.012), std(0x7d4525, { r: 0.4 }), -0.052 + i * 0.104, 0.065 + j * 0.088, 0.042));
+  g.add(mesh(rbox(0.245, 0.24, 0.095, 0.016), std(0x7a2bd6, { r: 0.3, m: 0.2 }), 0, -0.085, 0));
+  g.add(mesh(rbox(0.25, 0.03, 0.1, 0.008), std(0xffd45a, { r: 0.2, m: 0.95 }), 0, 0.03, 0));
   const l = decal(0.235, 0.21, canvasTex(256, 228, (c) => {
     c.fillStyle = grad(c, 0, 0, 256, 228, ['#9a45ff', '#5a1bb5']); c.fillRect(0, 0, 256, 228);
     c.fillStyle = '#ffd45a'; rr(c, 22, 60, 212, 86, 43); c.fill();
     text(c, 'CHOCO', 128, 105, 60, '#5a2a12');
     text(c, 'milk chocolate', 128, 182, 24, '#f0dcff', { weight: 600 });
   }), { r: 0.3 });
-  l.position.set(0, -0.09, 0.0296);
+  l.position.set(0, -0.09, 0.0482);
   g.add(l);
   return g;
 };
@@ -92,7 +94,7 @@ B.soda = () => {
 };
 
 B.gummy = () => {
-  const g = bag(0.3, 0.34, 0.11, canvasTex(256, 290, (c) => {
+  const g = bag(0.3, 0.34, 0.19, canvasTex(256, 290, (c) => {
     c.fillStyle = grad(c, 0, 0, 256, 290, ['#53e0ff', '#3f7dff']); c.fillRect(0, 0, 256, 290);
     c.fillStyle = 'rgba(255,255,255,.28)'; rr(c, 30, 120, 196, 140, 30); c.fill();
     text(c, 'GUMMY', 128, 50, 50, '#fff', { stroke: '#1b3fb3' });
@@ -112,7 +114,7 @@ B.gummy = () => {
     const e1 = mesh(new THREE.SphereGeometry(0.021, 10, 8), m1.material, -0.15, Math.sin(i * 1.7) * 0.03, Math.cos(i) * 0.012);
     const e2 = mesh(new THREE.SphereGeometry(0.021, 10, 8), m2.material, 0.15, Math.sin(PI * 2.4 + i * 1.7) * 0.03, Math.cos(PI * 3 + i) * 0.012);
     w.add(m1, m2, e1, e2);
-    w.position.set(0, -0.03 - i * 0.055, 0.075 + i * 0.012);
+    w.position.set(0, -0.03 - i * 0.055, 0.105 + i * 0.014);
     w.rotation.z = (i - 1) * 0.22;
     wrap.add(w);
   });
@@ -139,13 +141,14 @@ B.cards = () => {
   });
   [-1, 0, 1].forEach((k, i) => {
     const card = new THREE.Group();
-    card.add(mesh(rbox(0.2, 0.28, 0.01, 0.004), std(0xffffff, { r: 0.35 })));
+    card.add(mesh(rbox(0.2, 0.28, 0.022, 0.006), std(0xffffff, { r: 0.35 })));
     const d = decal(0.2, 0.28, art(i), { r: i === 1 ? 0.15 : 0.35, m: i === 1 ? 0.5 : 0 });
-    d.position.z = 0.0056; card.add(d);
-    card.position.set(k * 0.075, -Math.abs(k) * 0.02 + 0.01, (i === 1 ? 0.03 : 0) + i * 0.004);
-    card.rotation.z = -k * 0.3;
+    d.position.z = 0.0116; card.add(d);
+    card.position.set(k * 0.075, -Math.abs(k) * 0.02 + 0.01, (i === 1 ? 0.07 : 0.02) + i * 0.006);
+    card.rotation.z = -k * 0.3; card.rotation.y = k * 0.35;
     g.add(card);
   });
+  g.add(mesh(pillowGeo(0.24, 0.3, 0.12), std(0x1546c9, { r: 0.25, m: 0.6 }), 0, -0.03, -0.05));
   return g;
 };
 
@@ -154,8 +157,8 @@ B.mask = () => {
   const s = new THREE.Shape();
   s.moveTo(-0.19, 0.02); s.bezierCurveTo(-0.2, 0.12, -0.06, 0.125, 0, 0.075); s.bezierCurveTo(0.06, 0.125, 0.2, 0.12, 0.19, 0.02);
   s.bezierCurveTo(0.18, -0.085, 0.07, -0.1, 0.03, -0.03); s.quadraticCurveTo(0, -0.008, -0.03, -0.03); s.bezierCurveTo(-0.07, -0.1, -0.18, -0.085, -0.19, 0.02);
-  const geo = new THREE.ExtrudeGeometry(s, { depth: 0.03, bevelEnabled: true, bevelThickness: 0.014, bevelSize: 0.012, bevelSegments: 4, curveSegments: 20 });
-  geo.translate(0, 0, -0.015);
+  const geo = new THREE.ExtrudeGeometry(s, { depth: 0.05, bevelEnabled: true, bevelThickness: 0.024, bevelSize: 0.014, bevelSegments: 5, curveSegments: 20 });
+  geo.translate(0, 0, -0.045);
   g.add(mesh(geo, std(0x3b2a8f, { r: 0.42, m: 0.1 })));
   const lash = std(0xffc8ec, { r: 0.3, e: 0xff7fd0, ei: 0.25 });
   for (const sx of [-1, 1]) {
@@ -233,8 +236,8 @@ B.headphones = () => {
 
 B.console = () => {
   const g = new THREE.Group();
-  g.add(mesh(rbox(0.25, 0.155, 0.03, 0.012), std(0x23263a, { r: 0.35 })));
-  g.add(mesh(rbox(0.075, 0.165, 0.036, 0.03), gloss(0x19c8ff), -0.155, 0, 0), mesh(rbox(0.075, 0.165, 0.036, 0.03), gloss(0xff4466), 0.155, 0, 0));
+  g.add(mesh(rbox(0.25, 0.155, 0.03, 0.012), std(0x23263a, { r: 0.35 })), mesh(rbox(0.25, 0.15, 0.04, 0.02), std(0x2d3150, { r: 0.4 }), 0, 0, -0.03));
+  g.add(mesh(rbox(0.075, 0.165, 0.075, 0.035), gloss(0x19c8ff), -0.155, 0, -0.018), mesh(rbox(0.075, 0.165, 0.075, 0.035), gloss(0xff4466), 0.155, 0, -0.018));
   const scr = decal(0.225, 0.13, canvasTex(256, 148, (c) => {
     c.fillStyle = grad(c, 0, 0, 0, 148, ['#6fd6ff', '#c9f3ff']); c.fillRect(0, 0, 256, 148);
     c.fillStyle = '#fff'; for (const [x, y] of [[40, 30], [170, 22]]) { rr(c, x, y, 48, 14, 7); c.fill(); }
@@ -260,7 +263,7 @@ B.console = () => {
 B.phone = () => {
   const g = new THREE.Group();
   const frame = std(0xc9cfdd, { r: 0.22, m: 1 });
-  g.add(mesh(rbox(0.19, 0.39, 0.022, 0.03, 5), frame));
+  g.add(mesh(rbox(0.19, 0.39, 0.038, 0.03, 5), frame));
   const scr = decal(0.176, 0.376, canvasTex(256, 548, (c) => {
     rr(c, 0, 0, 256, 548, 38); c.clip();
     c.fillStyle = grad(c, 0, 0, 256, 548, ['#ff5cc8', '#7a5cff', '#27d3ff']); c.fillRect(0, 0, 256, 548);
@@ -272,11 +275,11 @@ B.phone = () => {
     c.fillStyle = 'rgba(255,255,255,.3)'; rr(c, 14, 452, 228, 76, 26); c.fill();
     for (let k = 0; k < 4; k++) { c.fillStyle = cols[k + 2]; rr(c, 22 + k * 56, 468, 44, 44, 13); c.fill(); }
   }), { lit: false });
-  scr.position.z = 0.0116; g.add(scr);
+  scr.position.z = 0.0196; g.add(scr);
   g.add(mesh(rbox(0.004, 0.05, 0.008, 0.002), frame, 0.096, 0.07, 0), mesh(rbox(0.004, 0.03, 0.008, 0.002), frame, -0.096, 0.1, 0));
-  g.add(mesh(rbox(0.085, 0.085, 0.01, 0.02), std(0xb4bbcc, { r: 0.3, m: 0.9 }), 0.04, 0.135, -0.014));
+  g.add(mesh(rbox(0.085, 0.085, 0.01, 0.02), std(0xb4bbcc, { r: 0.3, m: 0.9 }), 0.04, 0.135, -0.022));
   for (const [x, y] of [[0.02, 0.155], [0.06, 0.155], [0.04, 0.115]]) {
-    const lens = mesh(new THREE.CylinderGeometry(0.016, 0.016, 0.01, 16), std(0x11131f, { r: 0.1, m: 0.8 }), x, y, -0.02); lens.rotation.x = PI / 2; g.add(lens);
+    const lens = mesh(new THREE.CylinderGeometry(0.016, 0.016, 0.01, 16), std(0x11131f, { r: 0.1, m: 0.8 }), x, y, -0.028); lens.rotation.x = PI / 2; g.add(lens);
   }
   g.rotation.set(-0.05, 0.25, 0.06);
   const w = new THREE.Group(); w.add(g); return w;

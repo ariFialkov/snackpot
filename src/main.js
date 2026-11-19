@@ -8,12 +8,13 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 
 import { ITEMS, ITEM, TIERS, UNITS_PER_BET, DEFAULT_RTP, createPaytable, drawRound, secureRandom } from './game/math.js';
-import { clock, tween, wait, updateTweens, E, lerp, rand, pick, shuffle } from './gfx/anim.js';
+import { clock, tween, wait, updateTweens, E, lerp, rand, pick } from './gfx/anim.js';
 import { glow, mesh, FONT } from './gfx/util.js';
 import { makeItem, disposeItem, updateTwinklers } from './gfx/models.js';
 import { buildMachine, H as MACHINE_H, W as MACHINE_W, D as MACHINE_D, ITEM_SCALE as IS } from './gfx/machine.js';
 import { buildEnvironment } from './gfx/environment.js';
 import { buildVfx } from './gfx/vfx.js';
+import { createTray } from './gfx/tray.js';
 import { sfx, unlock, setMuted } from './audio.js';
 import { createUI, fmt } from './ui.js';
 
@@ -44,11 +45,11 @@ const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(32, 1, 0.5, 220);
 const pmrem = new THREE.PMREMGenerator(renderer);
 scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
-scene.environmentIntensity = 0.45;
+scene.environmentIntensity = 0.42;
 
-scene.add(new THREE.HemisphereLight(0xffffff, 0xffe1f0, 0.55));
-const sun = new THREE.DirectionalLight(0xfff6e8, 1.25);
-sun.position.set(5.5, 11, 8.5);
+scene.add(new THREE.HemisphereLight(0xffffff, 0xffe1f0, 0.42));
+const sun = new THREE.DirectionalLight(0xfff6e8, 1.6);
+sun.position.set(6.5, 10, 9);
 sun.castShadow = true;
 sun.shadow.mapSize.set(2048, 2048);
 Object.assign(sun.shadow.camera, { left: -10, right: 10, top: 9, bottom: -5, near: 1, far: 34 });
@@ -58,8 +59,8 @@ scene.add(sun);
 const ledMat = glow(0xff3d9a, 1.7);
 const panelMat = new THREE.MeshPhysicalMaterial({ color: 0x7a5cff, roughness: 0.3, clearcoat: 1, clearcoatRoughness: 0.2 });
 
-let composer, bloom, quality = 2, ui, machine, env, vfx;
-const rig = { dist: 12, target: new THREE.Vector3(0, 2.95, 0), focus: 0, fTarget: new THREE.Vector3(), fDist: 7, trauma: 0, sway: 1 };
+let composer, bloom, quality = 2, ui, machine, env, vfx, tray;
+const rig = { dist: 12, target: new THREE.Vector3(0, 2.95, 0), focus: 0, fTarget: new THREE.Vector3(), fDist: 7, trauma: 0, sway: 1, yaw0: 0.16, pitch0: -0.11 };
 
 function resize() {
   const w = innerWidth, h = innerHeight, aspect = w / h;
@@ -67,31 +68,54 @@ function resize() {
   renderer.setPixelRatio(pr); renderer.setSize(w, h, false);
   composer.setPixelRatio(pr); composer.setSize(w, h);
   camera.aspect = aspect;
-  // Fill the screen with the machine: fit its width in portrait, its height in
-  // landscape. Only the bet controls get a strip below it; the rest of the HUD
-  // sits over the marquee (portrait) or beside the machine (landscape).
+  // A low, wide-angle three-quarter view. The distance and aim are solved so the
+  // machine's bounding box fills the screen, leaving a strip for the bet controls.
+  const portrait = w < h;
+  camera.fov = portrait ? 56 : 44;
+  camera.updateProjectionMatrix();
+  rig.yaw0 = portrait ? 0.17 : 0.3; rig.pitch0 = -0.12;
   const t = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
-  const bottomPx = Math.min(70, h * 0.1), topY = MACHINE_H + 0.22, baseY = 0.16;
-  const px = Math.min(w / (MACHINE_W + 0.1), (h - bottomPx) / (topY - baseY)); // screen px per world unit
-  const viewH = h / px, yBottom = baseY - bottomPx / px;
-  rig.target.set(0, yBottom + viewH / 2, MACHINE_D / 2);
-  rig.dist = viewH / 2 / t;
-  const side = w / 2 - (MACHINE_W / 2) * px;
-  document.body.classList.toggle('wide', side >= 230);
-  document.documentElement.style.setProperty('--mh', `${(MACHINE_W / 2) * px}px`);
-  document.documentElement.style.setProperty('--fascia', `${(yBottom + viewH - 1.375) * px}px`);
-  document.documentElement.style.setProperty('--tcx', `${-0.485 * px}px`);
+  const yLo = -1 + (2 * Math.min(70, h * 0.1)) / h, yHi = 0.985, xLim = 0.985;
+  rig.target.set(0, MACHINE_H / 2, 0);
+  let bb;
+  for (let pass = 0; pass < 5; pass++) {
+    let lo = 2, hi = 90;
+    for (let k = 0; k < 24; k++) { const mid = (lo + hi) / 2; bb = measure(mid); if (bb.x1 - bb.x0 <= 2 * xLim && bb.y1 - bb.y0 <= yHi - yLo) hi = mid; else lo = mid; }
+    rig.dist = hi; bb = measure(hi);
+    camRight.setFromMatrixColumn(camera.matrixWorld, 0); camUp.setFromMatrixColumn(camera.matrixWorld, 1);
+    rig.target.addScaledVector(camRight, ((bb.x0 + bb.x1) / 2) * rig.dist * t * aspect).addScaledVector(camUp, ((bb.y0 + bb.y1) / 2 - (yLo + yHi) / 2) * rig.dist * t);
+  }
+  bb = measure(rig.dist);
+  const ml = ((bb.x0 + 1) / 2) * w, mr = ((bb.x1 + 1) / 2) * w, fp = toScreen(tmpV.set(-0.485, 1.375, MACHINE_D / 2));
+  document.body.classList.toggle('wide', Math.min(ml, w - mr) >= 230);
+  const css = document.documentElement.style;
+  css.setProperty('--ml', `${ml}px`); css.setProperty('--mr', `${mr}px`); css.setProperty('--fx', `${fp.x}px`); css.setProperty('--fy', `${fp.y}px`);
   camera.updateProjectionMatrix();
   if (scene.fog) { scene.fog.near = rig.dist + 10; scene.fog.far = rig.dist + 75; }
   vfx?.setPointScale((h * pr) / (2 * t));
 }
 
-const shake = new THREE.Vector3(), camPos = new THREE.Vector3(), camTgt = new THREE.Vector3();
+const shake = new THREE.Vector3(), camPos = new THREE.Vector3(), camTgt = new THREE.Vector3(), camRight = new THREE.Vector3(), camUp = new THREE.Vector3();
+const tmpV = new THREE.Vector3();
+function poseCamera(target, dist, yaw, pitch) {
+  camPos.set(Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), Math.cos(yaw) * Math.cos(pitch)).multiplyScalar(dist).add(target);
+  camera.position.copy(camPos); camera.lookAt(target); camera.updateMatrixWorld();
+}
+// screen-space bounds (NDC) of the machine for a given camera distance
+function measure(dist) {
+  poseCamera(rig.target, dist, rig.yaw0, rig.pitch0);
+  const b = { x0: 9, x1: -9, y0: 9, y1: -9 };
+  for (const x of [-MACHINE_W / 2, MACHINE_W / 2]) for (const y of [0, MACHINE_H + 0.25]) for (const z of [-MACHINE_D / 2, MACHINE_D / 2]) {
+    tmpV.set(x, y, z).project(camera);
+    b.x0 = Math.min(b.x0, tmpV.x); b.x1 = Math.max(b.x1, tmpV.x); b.y0 = Math.min(b.y0, tmpV.y); b.y1 = Math.max(b.y1, tmpV.y);
+  }
+  return b;
+}
 function updateCamera(t, dt) {
   const f = rig.focus;
   camTgt.lerpVectors(rig.target, rig.fTarget, f);
   const dist = lerp(rig.dist, rig.fDist, f);
-  const yaw = Math.sin(t * 0.33) * 0.07 * rig.sway * (1 - f * 0.7), pitch = 0.035 + Math.sin(t * 0.21) * 0.012;
+  const yaw = rig.yaw0 * (1 - f * 0.5) + Math.sin(t * 0.33) * 0.05 * rig.sway * (1 - f * 0.7), pitch = rig.pitch0 * (1 - f * 0.4) + Math.sin(t * 0.21) * 0.01;
   camPos.set(Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), Math.cos(yaw) * Math.cos(pitch)).multiplyScalar(dist).add(camTgt);
   rig.trauma = Math.max(0, rig.trauma - dt * 1.8);
   const s = rig.trauma * rig.trauma * 0.22;
@@ -101,7 +125,6 @@ function updateCamera(t, dt) {
 }
 const focusCam = (target, dist, dur) => { const from = rig.focus; rig.fTarget.copy(target); rig.fDist = dist; return tween(dur, (k) => { rig.focus = lerp(from, 1, k); }); };
 const unfocusCam = (dur) => { const from = rig.focus; return tween(dur, (k) => { rig.focus = lerp(from, 0, k); }); };
-const tmpV = new THREE.Vector3();
 function toScreen(v) { tmpV.copy(v).project(camera); return { x: (tmpV.x * 0.5 + 0.5) * innerWidth, y: (-tmpV.y * 0.5 + 0.5) * innerHeight }; }
 
 // ---- thumbnails (rendered once from the real 3D models) --------------------------
@@ -173,14 +196,8 @@ function planSlots(dropIds) {
 }
 
 // ---- tray ------------------------------------------------------------------------
-let pile = [], pileOrder = [];
-function pileSpot(i) {
-  const b = machine.trayBox, per = 4, layer = Math.floor(i / per), k = pileOrder[i % per];
-  return new THREE.Vector3(lerp(b.x0, b.x1, (k + 0.5) / per) + rand(-0.04, 0.04), b.y + layer * 0.07, b.z - layer * 0.2 + rand(-0.03, 0.03));
-}
 function clearTray() {
-  const old = pile; pile = []; pileOrder = shuffle([0, 1, 2, 3]);
-  old.forEach((it, i) => tween(0.22, (k) => it.scale.setScalar(Math.max(0.001, it.userData.s0 * (1 - k))), E.inBack).then(() => disposeItem(it)));
+  tray.clear().forEach((it) => tween(0.22, (k) => it.scale.setScalar(Math.max(0.001, IS * (1 - k))), E.inBack).then(() => disposeItem(it)));
 }
 
 // ---- coin ------------------------------------------------------------------------
@@ -283,33 +300,34 @@ async function dropOne(step, drop, index, betCents) {
   let s0 = IS;
   if (tier >= 3) s0 = await heroMoment(item, id, tier, cents);
 
-  // fall into the tray
-  const from = item.position.clone(), to = pileSpot(pile.length), fromRot = item.rotation.clone();
-  const toRot = new THREE.Euler(rand(-0.25, 0.1), rand(-0.5, 0.5), rand(-0.45, 0.45));
-  const spin = pick([-1, 1]) * (2 + Math.floor(rand(2))) * Math.PI;
+  // tumble into the trough
+  const box = tray.box, R = 0.21;
+  const tx = THREE.MathUtils.clamp(item.position.x + rand(-0.2, 0.2), box.x0 + R + 0.04, box.x1 - R - 0.04);
+  let vel;
   if (tier >= 3) {
     sfx.whoosh();
+    const from = item.position.clone(), inside = new THREE.Vector3(tx, 1.0, 0.36), q0 = item.quaternion.clone();
     await tween(0.45, (e, k) => {
-      item.position.lerpVectors(from, to, e); item.position.y += Math.sin(k * Math.PI) * 0.5; item.position.z += Math.sin(k * Math.PI) * 0.6;
-      item.scale.setScalar(lerp(s0, IS, e)); item.rotation.set(lerp(fromRot.x, toRot.x, e), toRot.y + (1 - e) * spin, lerp(fromRot.z, toRot.z, e));
+      item.position.lerpVectors(from, inside, e); item.position.y -= Math.sin(k * Math.PI) * 0.45;
+      item.scale.setScalar(lerp(s0, IS, e)); item.quaternion.copy(q0); item.rotateY(e * Math.PI * 3);
       vfx.trail(item.position, color, 0.14);
     }, E.in);
+    vel = { x: 0, y: -3, z: -1.2 };
   } else {
-    const h = from.y - to.y, dur = Math.sqrt((2 * h) / 26);
-    await tween(dur, (e, k) => {
-      item.position.set(lerp(from.x, to.x, k), from.y - h * e, lerp(from.z, to.z, k * k));
-      item.rotation.set(lerp(fromRot.x, toRot.x, k) + (1 - k) * spin * 0.5, lerp(fromRot.y, toRot.y, k), toRot.z + (1 - k) * spin);
-      if (tier >= 1 && Math.random() < 0.35 + tier * 0.3) vfx.trail(item.position, color, 0.07 + tier * 0.03);
-    }, E.in);
+    const T = Math.sqrt((2 * Math.max(0.2, item.position.y - box.top)) / 17);
+    vel = { x: (tx - item.position.x) / T, y: 0, z: 0 };
+    if (tier >= 1) item.userData.trail = { color, size: 0.07 + tier * 0.03, rate: 0.3 + tier * 0.25 };
   }
-  // land
-  item.userData.s0 = IS; pile.push(item);
+  await new Promise((res) => tray.add(item, R, vel, res));
+  // first impact
+  const to = item.position.clone();
+  item.userData.trail = null;
   sfx.thunk(tier); sfx.tier(tier < 3 ? tier : 0);
   rig.trauma = Math.min(1, rig.trauma + 0.2 + tier * 0.17);
   vfx.burst(to, tier ? color : 0xffffff, 8 + tier * 10, { speed: 1.6 + tier * 0.5, size: 0.1 + tier * 0.02, up: 1.2 });
   if (tier >= 2) vfx.ring(to, color, 0.8 + tier * 0.3, 0.45);
   if (tier >= 3) { vfx.confetti(to, 50 + tier * 20, { up: 5 }); ui.flash(); }
-  tween(0.3, (e, k) => { const b = Math.sin(k * Math.PI); item.position.y = to.y + b * (0.06 + tier * 0.012); item.scale.set(IS * (1 + (1 - k) * 0.18), IS * (1 - (1 - k) * 0.22), IS * (1 + (1 - k) * 0.18)); }, E.out);
+  tween(0.3, (e, k) => { item.scale.set(IS * (1 + (1 - k) * 0.16), IS * (1 - (1 - k) * 0.2), IS * (1 + (1 - k) * 0.16)); }, E.out);
 
   // score it
   const p = toScreen(tmpV.set(to.x, to.y + 0.35, to.z + 0.3));
@@ -325,7 +343,8 @@ async function dropOne(step, drop, index, betCents) {
     const big = combo.bonus >= 160;
     sfx.combo(); ui.feedCombo(combo.items);
     ui.banner({ kicker: 'COMBO', title: combo.name.toUpperCase(), amount: bonus, color: '#ffd23f', hold: 1.25, icons: combo.items, small: true });
-    for (const it of pile) if (combo.items.includes(it.userData.itemId)) { const y0 = it.position.y; tween(0.5, (e, k) => { it.position.y = y0 + Math.sin(k * Math.PI) * 0.22; it.rotation.y += 0.25; }); vfx.burst(it.position, 0xffd23f, 14, { speed: 2 }); }
+    tray.kick((o) => combo.items.includes(o.userData.itemId), 4.2);
+    for (const b of tray.bodies) if (combo.items.includes(b.o.userData.itemId)) vfx.burst(b.o.position, 0xffd23f, 14, { speed: 2 });
     vfx.confetti(new THREE.Vector3(-0.3, 1.3, 1), big ? 140 : 70, { up: 6 });
     if (big) { vfx.coinFountain(new THREE.Vector3(-0.2, 0.6, 1.2), 40); ui.flash(); }
     machine.state.flash = 1; rig.trauma = Math.min(1, rig.trauma + 0.4);
@@ -424,6 +443,7 @@ async function boot() {
   scene.add(machine.root);
   env = buildEnvironment(scene, ledMat, panelMat);
   vfx = buildVfx(scene, camera);
+  tray = createTray(machine.trayBox);
   await env.regenerate(false);
   for (const slot of machine.slots) setSlotItem(slot, randomDisplayId());
   machine.setScreen('INSERT COIN', fmt(store.bet), '#7dffb0');
@@ -448,8 +468,9 @@ async function boot() {
   renderer.setAnimationLoop((now) => {
     const real = Math.min((now - last) / 1000, unclamped ? 0.5 : 0.05); last = now;
     const dt = updateTweens(real), t = clock.real;
-    machine.update(t, real); env.update(t, real); vfx.update(dt, t); updateTwinklers(t); ui.update(real);
-    for (const s of machine.slots) if (s.item && !s.busy) { s.item.rotation.y = Math.sin(t * 0.9 + s.index * 1.3) * 0.2; s.item.position.y = Math.sin(t * 1.4 + s.index) * 0.008; }
+    machine.update(t, real); env.update(t, real); vfx.update(dt, t); tray.update(dt); updateTwinklers(t);
+    for (const b of tray.bodies) { const tr = b.o.userData.trail; if (tr && Math.random() < tr.rate) vfx.trail(b.o.position, tr.color, tr.size); } ui.update(real);
+    for (const s of machine.slots) if (s.item && !s.busy) { s.item.rotation.y = Math.sin(t * 0.7 + s.index * 1.3) * 0.65; s.item.rotation.x = -0.06; s.item.position.y = Math.sin(t * 1.4 + s.index) * 0.008; }
     updateCamera(t, real);
     composer.render();
     if (!document.hidden && !params.has('hq') && quality > 0 && ++frames > 30) {
